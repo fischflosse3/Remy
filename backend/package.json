@@ -1,5 +1,5 @@
 {
-  "name": "omnimemory-backend",
+  "name": "remy-backend",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,6 +11,7 @@
     "cors": "latest",
     "dotenv": "latest",
     "express": "latest",
-    "openai": "latest"
+    "openai": "latest",
+    "stripe": "latest"
   }
 }

@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import OpenAI from 'openai';
+import Stripe from 'stripe';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -20,6 +21,10 @@ const freeLimit = Number(process.env.FREE_MONTHLY_QUESTIONS || 10);
 const plusLimit = Number(process.env.PLUS_MONTHLY_QUESTIONS || 100);
 const plusPrice = process.env.PLUS_PRICE || '3,99 € / Monat';
 const paymentLink = process.env.STRIPE_PAYMENT_LINK || '';
+const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
+const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
+const stripePriceId = process.env.STRIPE_PRICE_ID || '';
+const stripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;
 const authSecret = process.env.AUTH_SECRET || 'dev-secret-change-me';
 const maxQuestionChars = Number(process.env.MAX_QUESTION_CHARS || 800);
 const maxMemoryChars = Number(process.env.MAX_MEMORY_CHARS || 2600);
@@ -29,11 +34,31 @@ const openai = hasKey ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : nul
 const rateBuckets = new Map();
 
 app.use(cors({ origin: true }));
+
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  if (!stripe || !stripeWebhookSecret) return res.status(400).send('Stripe ist noch nicht vollständig konfiguriert.');
+  const signature = req.headers['stripe-signature'];
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, signature, stripeWebhookSecret);
+  } catch (error) {
+    console.error('Stripe Webhook Signatur ungültig:', error.message);
+    return res.status(400).send(`Webhook Error: ${error.message}`);
+  }
+  try {
+    await handleStripeEvent(event);
+    res.json({ received: true });
+  } catch (error) {
+    console.error('Stripe Webhook Verarbeitung fehlgeschlagen:', error);
+    res.status(500).send('Webhook konnte nicht verarbeitet werden.');
+  }
+});
+
 app.use(express.json({ limit: '1mb' }));
 app.use(rateLimitMiddleware);
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'remy-backend', hasKey, model, freeLimit, plusLimit, plusPrice, auth: true, paymentLinkConfigured: Boolean(paymentLink) });
+  res.json({ ok: true, service: 'remy-backend', hasKey, model, freeLimit, plusLimit, plusPrice, auth: true, paymentLinkConfigured: Boolean(paymentLink), stripeConfigured: Boolean(stripe), stripePriceConfigured: Boolean(stripePriceId) });
 });
 
 app.post('/api/auth/register', async (req, res) => {
@@ -81,7 +106,55 @@ app.get('/api/auth/me', async (req, res) => {
 
 app.get('/api/checkout-link', (_req, res) => {
   if (!paymentLink) return res.status(404).json({ error: 'Der Zahlungslink ist noch nicht konfiguriert.' });
-  res.json({ ok: true, url: paymentLink });
+  res.json({ ok: true, url: paymentLink, mode: 'payment_link' });
+});
+
+app.post('/api/create-checkout-session', async (req, res) => {
+  try {
+    const identity = await getIdentity(req);
+    if (!identity.user) return res.status(401).json({ error: 'Bitte melde dich zuerst an, damit Remy Plus deinem Konto zugeordnet werden kann.' });
+
+    if (!stripe || !stripePriceId) {
+      if (!paymentLink) return res.status(404).json({ error: 'Stripe ist noch nicht konfiguriert.' });
+      return res.json({ ok: true, url: paymentLink, mode: 'payment_link_fallback' });
+    }
+
+    const store = await readUsersStore();
+    const user = store.usersByEmail[identity.user.email];
+    let customerId = user.stripeCustomerId || '';
+    if (!customerId) {
+      const customer = await stripe.customers.create({ email: user.email, metadata: { remyUserId: user.id } });
+      customerId = customer.id;
+      user.stripeCustomerId = customerId;
+      user.updatedAt = new Date().toISOString();
+      await writeUsersStore(store);
+    }
+
+    const baseSuccess = process.env.STRIPE_SUCCESS_URL || 'https://remy-backend-uqrf.onrender.com/checkout/success';
+    const baseCancel = process.env.STRIPE_CANCEL_URL || 'https://remy-backend-uqrf.onrender.com/checkout/cancel';
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      customer: customerId,
+      client_reference_id: user.id,
+      line_items: [{ price: stripePriceId, quantity: 1 }],
+      success_url: `${baseSuccess}?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: baseCancel,
+      metadata: { remyUserId: user.id },
+      subscription_data: { metadata: { remyUserId: user.id } }
+    });
+    res.json({ ok: true, url: session.url, mode: 'checkout_session' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Checkout konnte gerade nicht erstellt werden.' });
+  }
+});
+
+app.get('/checkout/success', (_req, res) => {
+  res.type('html').send('<!doctype html><meta charset="utf-8"><title>Remy Plus</title><body style="font-family:system-ui;padding:40px;background:#f5fbff;color:#203a57"><h1>Danke! Remy Plus wird aktiviert.</h1><p>Du kannst dieses Fenster schließen und Remy neu öffnen. Es kann ein paar Sekunden dauern, bis Stripe die Zahlung bestätigt hat.</p></body>');
+});
+
+app.get('/checkout/cancel', (_req, res) => {
+  res.type('html').send('<!doctype html><meta charset="utf-8"><title>Remy Plus</title><body style="font-family:system-ui;padding:40px;background:#f5fbff;color:#203a57"><h1>Zahlung abgebrochen</h1><p>Du kannst jederzeit in Remy erneut auf Upgrade klicken.</p></body>');
 });
 
 app.get('/api/usage', async (req, res) => {
@@ -203,6 +276,73 @@ function verifyPassword(password, user) {
 function normalizeEmail(email) { const clean = String(email || '').trim().toLowerCase(); return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean) ? clean : ''; }
 async function readUsersStore() { try { const store = JSON.parse(await fs.readFile(usersFile, 'utf8')); return { usersByEmail: store.usersByEmail || {}, usersById: store.usersById || {} }; } catch { return { usersByEmail: {}, usersById: {} }; } }
 async function writeUsersStore(store) { await fs.mkdir(dataDir, { recursive: true }); await fs.writeFile(usersFile, JSON.stringify(store, null, 2)); }
+async function handleStripeEvent(event) {
+  switch (event.type) {
+    case 'checkout.session.completed': {
+      const session = event.data.object;
+      const userId = session.client_reference_id || session.metadata?.remyUserId;
+      if (!userId) return;
+      await setUserPlanById(userId, 'plus', {
+        stripeCustomerId: typeof session.customer === 'string' ? session.customer : session.customer?.id,
+        stripeSubscriptionId: typeof session.subscription === 'string' ? session.subscription : session.subscription?.id,
+        lastStripeEvent: event.type
+      });
+      break;
+    }
+    case 'customer.subscription.updated':
+    case 'customer.subscription.deleted': {
+      const subscription = event.data.object;
+      const userId = subscription.metadata?.remyUserId || await findUserIdByStripeCustomer(subscription.customer);
+      if (!userId) return;
+      const activeStatuses = new Set(['active', 'trialing']);
+      await setUserPlanById(userId, activeStatuses.has(subscription.status) ? 'plus' : 'free', {
+        stripeCustomerId: typeof subscription.customer === 'string' ? subscription.customer : subscription.customer?.id,
+        stripeSubscriptionId: subscription.id,
+        stripeSubscriptionStatus: subscription.status,
+        lastStripeEvent: event.type
+      });
+      break;
+    }
+    case 'invoice.payment_succeeded': {
+      const invoice = event.data.object;
+      const userId = await findUserIdByStripeCustomer(invoice.customer);
+      if (userId) await setUserPlanById(userId, 'plus', { lastStripeEvent: event.type });
+      break;
+    }
+    case 'invoice.payment_failed': {
+      const invoice = event.data.object;
+      const userId = await findUserIdByStripeCustomer(invoice.customer);
+      if (userId) await setUserPlanById(userId, 'free', { lastStripeEvent: event.type });
+      break;
+    }
+    default:
+      break;
+  }
+}
+async function findUserIdByStripeCustomer(customerId) {
+  if (!customerId) return '';
+  const store = await readUsersStore();
+  for (const user of Object.values(store.usersByEmail)) {
+    if (user.stripeCustomerId === customerId) return user.id;
+  }
+  return '';
+}
+async function setUserPlanById(userId, plan, extra = {}) {
+  const store = await readUsersStore();
+  const email = store.usersById[userId];
+  if (!email || !store.usersByEmail[email]) return null;
+  const user = store.usersByEmail[email];
+  Object.assign(user, extra, { plan, updatedAt: new Date().toISOString() });
+  store.usersByEmail[email] = user;
+  await writeUsersStore(store);
+  const usageStore = await readUsageStore();
+  const usage = normalizeUsage(usageStore, user.id, plan);
+  usage.plan = plan;
+  usageStore.users[user.id] = usage;
+  await writeUsageStore(usageStore);
+  return user;
+}
+
 function publicUser(user) { return { id: user.id, email: user.email, plan: user.plan || 'free', createdAt: user.createdAt }; }
 function currentMonth() { return new Date().toISOString().slice(0, 7); }
 async function readUsageStore() { try { return JSON.parse(await fs.readFile(usageFile, 'utf8')); } catch { return { users: {} }; } }

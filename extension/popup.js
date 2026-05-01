@@ -15,7 +15,7 @@ async function requestHeaders(extra = {}) { return authHeaders({ 'X-Omni-User-Id
 async function ensureUserId() {
   const local = await storageGet(['omni_ai']);
   const current = local.omni_ai || {};
-  if (current.userId) { state.omni_ai = { backendUrl: current.backendUrl || DEFAULT_BACKEND_URL, userId: current.userId }; return current.userId; }
+  if (current.userId) { const backendUrl = (!current.backendUrl || current.backendUrl.includes('localhost') || current.backendUrl.includes('127.0.0.1')) ? DEFAULT_BACKEND_URL : current.backendUrl; state.omni_ai = { backendUrl, userId: current.userId }; if (backendUrl !== current.backendUrl) await storageSet({ omni_ai: state.omni_ai }); return current.userId; }
   const userId = crypto.randomUUID ? crypto.randomUUID() : `remy-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const next = { backendUrl: current.backendUrl || DEFAULT_BACKEND_URL, userId };
   await storageSet({ omni_ai: next }); state.omni_ai = next; return userId;
@@ -122,7 +122,7 @@ function renderSources(pages) {
 }
 function bindSourceLinks(root = document) { root.querySelectorAll('.open-source').forEach(btn => btn.addEventListener('click', () => { const url = btn.dataset.url; if (url) chrome.tabs.create({ url }); })); }
 function linkify(html) { return html.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" class="answer-link" target="_blank" rel="noreferrer">$1</a>'); }
-function getBackendUrl() { return String(state.omni_ai?.backendUrl || DEFAULT_BACKEND_URL).replace(/\/$/, ''); }
+function getBackendUrl() { const saved = String(state.omni_ai?.backendUrl || DEFAULT_BACKEND_URL); return (saved.includes('localhost') || saved.includes('127.0.0.1') ? DEFAULT_BACKEND_URL : saved).replace(/\/$/, ''); }
 
 function render() {
   const pages = state.pages || []; const autoOn = state.settings?.autoRemember !== false;
@@ -161,6 +161,19 @@ function renderAuth() {
   if (user) {
     $('accountEmail').textContent = user.email || '';
     $('accountPlan').textContent = (user.plan === 'plus') ? 'Remy Plus' : 'Remy Free';
+  }
+
+  const footerLogin = $('footerLoginBtn');
+  const footerLogout = $('footerLogoutBtn');
+  const footerEmail = $('footerEmail');
+  const footerPlan = $('footerPlan');
+  const footerAccount = $('footerAccount');
+  if (footerLogin && footerLogout && footerAccount) {
+    footerLogin.classList.toggle('hidden', Boolean(user));
+    footerLogout.classList.toggle('hidden', !user);
+    footerAccount.classList.toggle('logged-in', Boolean(user));
+    if (footerEmail) footerEmail.textContent = user ? user.email : 'Nicht angemeldet';
+    if (footerPlan) footerPlan.textContent = user ? ((user.plan === 'plus') ? 'Remy Plus' : 'Remy Free') : 'Login für Plus & Limits';
   }
 }
 async function submitAuth(mode) {
@@ -210,15 +223,25 @@ function renderUsage() {
   $('usageBar').style.width = `${Math.min(100, Math.round((used / limit) * 100))}%`; $('upgradeBtn').textContent = 'Upgrade';
 }
 async function openUpgrade() {
+  if (!state.auth?.token) {
+    openAccountTab();
+    $('authHint').textContent = 'Bitte melde dich an oder erstelle ein Konto. Dann kann Remy Plus deiner E-Mail zugeordnet werden.';
+    $('answer').innerHTML = '<span class="ai-label fallback-label">Login nötig</span>\nBitte melde dich zuerst an, damit Remy Plus deinem Konto zugeordnet werden kann.';
+    return;
+  }
   try {
-    const res = await fetch(`${getBackendUrl()}/api/checkout-link`, { headers: authHeaders() });
-    if (!res.ok) throw new Error('checkout unavailable');
-    const data = await res.json();
-    if (!data?.url) throw new Error('missing url');
+    const res = await fetch(`${getBackendUrl()}/api/create-checkout-session`, {
+      method: 'POST',
+      headers: await requestHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({})
+    });
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error(data?.error || 'Checkout gerade nicht verfügbar.');
+    if (!data?.url) throw new Error('Checkout-Link fehlt.');
     chrome.tabs.create({ url: data.url });
-  } catch {
+  } catch (error) {
     const price = state.usage?.plusPrice || '3,99 € / Monat';
-    $('answer').innerHTML = `<span class="ai-label fallback-label">Upgrade gerade nicht verfügbar</span>\nDer Zahlungslink ist noch nicht eingerichtet. Plus kostet ${escapeHtml(price)} für 100 Fragen pro Monat und mehr Komfort.`;
+    $('answer').innerHTML = `<span class="ai-label fallback-label">Upgrade gerade nicht verfügbar</span>\n${escapeHtml(error.message || `Plus kostet ${price} für 100 Fragen pro Monat und mehr Komfort.`)}`;
   }
 }
 async function refreshState() { await loadAuth(); const [response, local] = await Promise.all([send({ type: 'OMNI_GET_STATE' }), storageGet(['omni_ai'])]); if (response?.ok) { const omniAi = local.omni_ai || { backendUrl: DEFAULT_BACKEND_URL }; state = { ...response, omni_ai: omniAi, usage: state.usage }; await ensureUserId(); render(); } }
@@ -230,6 +253,16 @@ function formatDate(date) { try { return new Intl.DateTimeFormat('de-DE', { hour
 function escapeHtml(str) { return String(str || '').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;'); }
 function escapeRegExp(str) { return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
+function openSettingsPanel() { $('settingsPanel')?.classList.remove('hidden'); }
+function openAccountTab() {
+  openSettingsPanel();
+  document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.settings-tab-content').forEach(c => c.classList.add('hidden'));
+  document.querySelector('[data-tab="accountTab"]')?.classList.add('active');
+  $('accountTab')?.classList.remove('hidden');
+  setTimeout(() => $('authEmail')?.focus(), 50);
+}
+
 async function init() {
   await refreshState(); await refreshMe(); await checkBackend(); await refreshUsage();
   $('startOnboarding').addEventListener('click', async () => { let response = await send({ type: 'OMNI_SET_AUTO', value: true }); if (response?.ok) state.settings = response.settings; response = await send({ type: 'OMNI_SET_ONBOARDING_SEEN', value: true }); if (response?.ok) state.settings = response.settings; render(); });
@@ -237,9 +270,12 @@ async function init() {
   $('toggleAuto').addEventListener('click', async () => { const next = !(state.settings?.autoRemember !== false); const response = await send({ type: 'OMNI_SET_AUTO', value: next }); if (response?.ok) { state.settings = response.settings; render(); } });
   $('ask').addEventListener('click', () => askMemory($('question').value));
   $('upgradeBtn').addEventListener('click', openUpgrade);
+  $('onboardingLoginBtn')?.addEventListener('click', openAccountTab);
+  $('footerLoginBtn')?.addEventListener('click', openAccountTab);
   $('loginBtn')?.addEventListener('click', () => submitAuth('login'));
   $('registerBtn')?.addEventListener('click', () => submitAuth('register'));
   $('logoutBtn')?.addEventListener('click', logout);
+  $('footerLogoutBtn')?.addEventListener('click', logout);
   $('question').addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); askMemory($('question').value); } });
   document.querySelectorAll('.chip').forEach(chip => chip.addEventListener('click', () => { $('question').value = chip.dataset.question || ''; askMemory($('question').value); }));
   $('toggleSettings').addEventListener('click', () => $('settingsPanel').classList.toggle('hidden'));

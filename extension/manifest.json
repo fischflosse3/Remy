@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Remy",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Remy merkt sich hilfreiche Browserseiten, YouTube-Videos und dynamische Inhalte automatisch, schützt sensible Seiten und hilft dir, sie mit Links wiederzufinden.",
   "permissions": [
     "storage",
@@ -13,8 +13,8 @@
   "host_permissions": [
     "http://*/*",
     "https://*/*",
-    "https://remy-backend-uqrf.onrender.com/*",
-    "http://127.0.0.1:8787/*"
+    "http://127.0.0.1:8787/*",
+    "https://remy-backend-uqrf.onrender.com/*"
   ],
   "action": {
     "default_title": "Remy",
