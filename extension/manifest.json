@@ -13,7 +13,7 @@
   "host_permissions": [
     "http://*/*",
     "https://*/*",
-    "http://localhost:8787/*",
+    "https://remy-backend-uqrf.onrender.com/*",
     "http://127.0.0.1:8787/*"
   ],
   "action": {

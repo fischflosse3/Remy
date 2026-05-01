@@ -16,6 +16,7 @@ const port = Number(process.env.PORT || 8787);
 const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
 const freeLimit = Number(process.env.FREE_MONTHLY_QUESTIONS || 10);
 const plusPrice = process.env.PLUS_PRICE || '3,99 € / Monat';
+const stripePaymentLink = String(process.env.STRIPE_PAYMENT_LINK || '').trim();
 const maxQuestionChars = Number(process.env.MAX_QUESTION_CHARS || 800);
 const maxMemoryChars = Number(process.env.MAX_MEMORY_CHARS || 2600);
 const maxMemories = Number(process.env.MAX_MEMORIES_PER_ASK || 10);
@@ -27,7 +28,8 @@ app.use(cors({ origin: true }));
 app.use(express.json({ limit: '1mb' }));
 app.use(rateLimitMiddleware);
 
-app.get('/health', (_req, res) => { res.json({ ok: true, service: 'remy-backend', hasKey, model, freeLimit, plusPrice }); });
+app.get('/health', (_req, res) => { res.json({ ok: true, service: 'remy-backend', hasKey, model, freeLimit, plusPrice, hasPaymentLink: Boolean(stripePaymentLink) }); });
+app.get('/api/config', (_req, res) => { res.json({ ok: true, plusPrice, hasPaymentLink: Boolean(stripePaymentLink), paymentLink: stripePaymentLink || null }); });
 app.get('/api/usage', async (req, res) => { const userId = getUserId(req); const usage = await getUsage(userId); res.json({ ok: true, usage: publicUsage(usage) }); });
 
 app.post('/api/ask', async (req, res) => {
