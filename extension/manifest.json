@@ -1,0 +1,50 @@
+{
+  "manifest_version": 3,
+  "name": "Remy",
+  "version": "0.6.0",
+  "description": "Remy merkt sich hilfreiche Browserseiten, YouTube-Videos und dynamische Inhalte automatisch, schützt sensible Seiten und hilft dir, sie mit Links wiederzufinden.",
+  "permissions": [
+    "storage",
+    "tabs",
+    "notifications",
+    "unlimitedStorage",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*",
+    "http://localhost:8787/*",
+    "http://127.0.0.1:8787/*"
+  ],
+  "action": {
+    "default_title": "Remy",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
