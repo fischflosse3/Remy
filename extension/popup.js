@@ -1,7 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const DEFAULT_BACKEND_URL = 'http://localhost:8787';
 const stopwords = new Set(['der','die','das','und','oder','aber','ich','du','er','sie','es','wir','ihr','ein','eine','einer','eines','mit','von','für','zu','im','in','auf','an','ist','sind','war','waren','was','wie','wo','wer','wenn','dass','nicht','auch','als','bei','aus','dem','den','des','zur','zum','the','and','or','to','of','in','for','with','is','are','what','how','why','a','an']);
-let state = { pages: [], settings: { autoRemember: true, hasSeenOnboarding: false }, omni_ai: { backendUrl: DEFAULT_BACKEND_URL, userId: null }, usage: null };
+let state = { pages: [], settings: { autoRemember: true, hasSeenOnboarding: false }, omni_ai: { backendUrl: DEFAULT_BACKEND_URL, userId: null }, usage: null, config: null };
 
 function send(message) { return new Promise(resolve => chrome.runtime.sendMessage(message, resolve)); }
 function storageGet(keys) { return new Promise(resolve => chrome.storage.local.get(keys, resolve)); }
@@ -87,7 +87,7 @@ async function askMemory(question) {
       if (response.status === 402 && data?.usage) {
         state.usage = data.usage; await cacheUsage(data.usage); renderUsage();
         answer.innerHTML = `<span class="ai-label fallback-label">Free-Limit erreicht</span>\n${escapeHtml(data.error || 'Du hast deine kostenlosen Fragen verbraucht.')}\n<button class="inline-upgrade" id="answerUpgrade">Auf Plus upgraden</button>`;
-        document.getElementById('answerUpgrade')?.addEventListener('click', showUpgradeMessage); return;
+        document.getElementById('answerUpgrade')?.addEventListener('click', openUpgrade); return;
       }
       throw new Error(data?.error || `Backend antwortet mit Status ${response.status}`);
     }
@@ -155,9 +155,38 @@ function renderUsage() {
   $('usageText').textContent = `${remaining} von ${limit} kostenlosen Fragen übrig · Plus ${usage.plusPrice || '3,99 € / Monat'}`;
   $('usageBar').style.width = `${Math.min(100, Math.round((used / limit) * 100))}%`; $('upgradeBtn').textContent = 'Upgrade';
 }
-function showUpgradeMessage() { const price = state.usage?.plusPrice || '3,99 € / Monat'; $('answer').innerHTML = `<span class="ai-label">Plus-Version</span>\nFür das echte Produkt würdest du hier eine Zahlungsseite öffnen. Empfehlung: ${escapeHtml(price)} für 100 Fragen pro Monat und mehr Komfort.`; }
+async function openUpgrade() {
+  const price = state.usage?.plusPrice || state.config?.plusPrice || '3,99 € / Monat';
+  let link = state.config?.paymentLink || '';
+  if (!link) {
+    await refreshConfig();
+    link = state.config?.paymentLink || '';
+  }
+  if (link && /^https:\/\//i.test(link)) {
+    chrome.tabs.create({ url: link });
+    return;
+  }
+  $('answer').innerHTML = `<span class="ai-label fallback-label">Upgrade noch nicht aktiv</span>
+Der Zahlungslink ist im Backend noch nicht gesetzt. Trage in Render bei den Environment Variables STRIPE_PAYMENT_LINK ein.
+
+Remy Plus: ${escapeHtml(price)} für 100 Fragen pro Monat und mehr Komfort.`;
+}
 
 async function refreshState() { const [response, local] = await Promise.all([send({ type: 'OMNI_GET_STATE' }), storageGet(['omni_ai'])]); if (response?.ok) { const omniAi = local.omni_ai || { backendUrl: DEFAULT_BACKEND_URL }; state = { ...response, omni_ai: omniAi, usage: state.usage }; await ensureUserId(); render(); } }
+async function refreshConfig() {
+  try {
+    const res = await fetch(`${getBackendUrl()}/api/config`, { method: 'GET' });
+    if (!res.ok) throw new Error('config unavailable');
+    const config = await res.json();
+    state.config = config;
+    await storageSet({ remy_config_cache: config });
+    return config;
+  } catch {
+    const cached = await storageGet(['remy_config_cache']);
+    state.config = cached.remy_config_cache || null;
+    return state.config;
+  }
+}
 async function refreshUsage() { try { const userId = await ensureUserId(); const res = await fetch(`${getBackendUrl()}/api/usage`, { headers: { 'X-Omni-User-Id': userId } }); if (!res.ok) throw new Error('usage unavailable'); const payload = await res.json(); state.usage = payload.usage; await cacheUsage(state.usage); } catch { state.usage = await getCachedUsage() || { plan: 'free', used: 0, limit: 10, remaining: 10, plusPrice: '3,99 € / Monat' }; } renderUsage(); }
 async function checkBackend() { try { const res = await fetch(`${getBackendUrl()}/health`, { method: 'GET' }); if (!res.ok) throw new Error('not ok'); const data = await res.json(); setAiStatus(Boolean(data?.ok && data?.hasKey), data?.hasKey ? 'KI bereit' : 'KI später erneut'); } catch { setAiStatus(false, 'KI gerade nicht erreichbar'); } }
 function setAiStatus(ok, text) { const el = $('aiStatus'); el.classList.toggle('ok', ok); el.classList.toggle('off', !ok); el.textContent = text || (ok ? 'KI bereit' : 'KI gerade nicht erreichbar'); }
@@ -167,12 +196,12 @@ function escapeHtml(str) { return String(str || '').replaceAll('&','&amp;').repl
 function escapeRegExp(str) { return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
 async function init() {
-  await refreshState(); await checkBackend(); await refreshUsage();
+  await refreshState(); await checkBackend(); await refreshConfig(); await refreshUsage();
   $('startOnboarding').addEventListener('click', async () => { let response = await send({ type: 'OMNI_SET_AUTO', value: true }); if (response?.ok) state.settings = response.settings; response = await send({ type: 'OMNI_SET_ONBOARDING_SEEN', value: true }); if (response?.ok) state.settings = response.settings; render(); });
   $('pauseOnboarding').addEventListener('click', async () => { let response = await send({ type: 'OMNI_SET_AUTO', value: false }); if (response?.ok) state.settings = response.settings; response = await send({ type: 'OMNI_SET_ONBOARDING_SEEN', value: true }); if (response?.ok) state.settings = response.settings; render(); });
   $('toggleAuto').addEventListener('click', async () => { const next = !(state.settings?.autoRemember !== false); const response = await send({ type: 'OMNI_SET_AUTO', value: next }); if (response?.ok) { state.settings = response.settings; render(); } });
   $('ask').addEventListener('click', () => askMemory($('question').value));
-  $('upgradeBtn').addEventListener('click', showUpgradeMessage);
+  $('upgradeBtn').addEventListener('click', openUpgrade);
   $('question').addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); askMemory($('question').value); } });
   document.querySelectorAll('.chip').forEach(chip => chip.addEventListener('click', () => { $('question').value = chip.dataset.question || ''; askMemory($('question').value); }));
   $('toggleSettings').addEventListener('click', () => $('settingsPanel').classList.toggle('hidden'));
