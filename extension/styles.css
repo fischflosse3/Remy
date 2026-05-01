@@ -224,3 +224,12 @@ body { background: linear-gradient(180deg, #fbfdff 0%, var(--bg) 100%); }
   line-height: 1.45;
   color: #52677d;
 }
+
+.auth-form { display: grid; gap: 10px; margin-top: 10px; }
+.auth-form input { width: 100%; box-sizing: border-box; border: 1px solid rgba(28, 39, 55, .12); border-radius: 14px; padding: 11px 12px; font: inherit; background: rgba(255,255,255,.86); color: #1d2633; outline: none; }
+.auth-form input:focus { border-color: rgba(91, 111, 255, .45); box-shadow: 0 0 0 3px rgba(91, 111, 255, .12); }
+.auth-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.auth-actions button { flex: 1; min-width: 120px; }
+#authHint { color: #667085; line-height: 1.35; }
+.account-box { margin-top: 10px; display: grid; gap: 8px; padding: 12px; border-radius: 16px; background: rgba(255,255,255,.72); border: 1px solid rgba(28,39,55,.08); }
+.account-box span { color: #667085; font-size: 12px; }

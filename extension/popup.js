@@ -1,14 +1,17 @@
 const $ = (id) => document.getElementById(id);
-const DEFAULT_BACKEND_URL = 'http://localhost:8787';
+const DEFAULT_BACKEND_URL = 'https://remy-backend-uqrf.onrender.com';
 const stopwords = new Set(['der','die','das','und','oder','aber','ich','du','er','sie','es','wir','ihr','ein','eine','einer','eines','mit','von','für','zu','im','in','auf','an','ist','sind','war','waren','was','wie','wo','wer','wenn','dass','nicht','auch','als','bei','aus','dem','den','des','zur','zum','the','and','or','to','of','in','for','with','is','are','what','how','why','a','an']);
-let state = { pages: [], settings: { autoRemember: true, hasSeenOnboarding: false }, omni_ai: { backendUrl: DEFAULT_BACKEND_URL, userId: null }, usage: null, config: null };
+let state = { pages: [], settings: { autoRemember: true, hasSeenOnboarding: false }, omni_ai: { backendUrl: DEFAULT_BACKEND_URL, userId: null }, usage: null, auth: { token: null, user: null } };
 
 function send(message) { return new Promise(resolve => chrome.runtime.sendMessage(message, resolve)); }
 function storageGet(keys) { return new Promise(resolve => chrome.storage.local.get(keys, resolve)); }
 function storageSet(obj) { return new Promise(resolve => chrome.storage.local.set(obj, resolve)); }
 async function cacheUsage(usage) { if (usage) await storageSet({ remy_usage_cache: usage }); }
 async function getCachedUsage() { const local = await storageGet(['remy_usage_cache']); return local.remy_usage_cache || null; }
-
+async function loadAuth() { const local = await storageGet(['remy_auth']); state.auth = local.remy_auth || { token: null, user: null }; return state.auth; }
+async function saveAuth(auth) { state.auth = auth || { token: null, user: null }; await storageSet({ remy_auth: state.auth }); }
+function authHeaders(extra = {}) { const headers = { ...extra }; if (state.auth?.token) headers.Authorization = `Bearer ${state.auth.token}`; return headers; }
+async function requestHeaders(extra = {}) { return authHeaders({ 'X-Omni-User-Id': await ensureUserId(), ...extra }); }
 async function ensureUserId() {
   const local = await storageGet(['omni_ai']);
   const current = local.omni_ai || {};
@@ -79,7 +82,7 @@ async function askMemory(question) {
   try {
     const response = await fetch(`${getBackendUrl()}/api/ask`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Omni-User-Id': await ensureUserId() },
+      headers: await requestHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ question, memories: contextPages.map(compactMemory), language: 'de', liveUrl: live.page?.url || '' })
     });
     if (!response.ok) {
@@ -127,7 +130,7 @@ function render() {
   $('toggleAuto').classList.toggle('off', !autoOn);
   $('autoStatus').textContent = autoOn ? 'Automatik aktiv' : 'Automatik pausiert';
   $('memoryCount').textContent = autoOn ? (pages.length ? `${pages.length} lokale Erinnerungen gespeichert. Kein Klick nötig.` : 'Öffne Webseiten — ich merke sie automatisch im Hintergrund.') : 'Remy ist pausiert. Deine alten Erinnerungen bleiben lokal.';
-  renderPrivacySettings(); renderMemories(pages); renderUsage();
+  renderPrivacySettings(); renderAuth(); renderMemories(pages); renderUsage();
 }
 
 function renderPrivacySettings() {
@@ -147,6 +150,57 @@ function renderMemories(pages) {
   container.querySelectorAll('.open-memory').forEach(button => button.addEventListener('click', () => { const url = button.dataset.url; if (url) chrome.tabs.create({ url }); }));
 }
 
+function renderAuth() {
+  const user = state.auth?.user;
+  const authForm = $('authForm');
+  const accountBox = $('accountBox');
+  if (!authForm || !accountBox) return;
+  authForm.classList.toggle('hidden', Boolean(user));
+  accountBox.classList.toggle('hidden', !user);
+  $('accountStatus').textContent = user ? 'Du bist angemeldet. Remy kann Limits und Plus deinem Konto zuordnen.' : 'Melde dich an, damit Remy deine Fragen deinem Konto zuordnen kann.';
+  if (user) {
+    $('accountEmail').textContent = user.email || '';
+    $('accountPlan').textContent = (user.plan === 'plus') ? 'Remy Plus' : 'Remy Free';
+  }
+}
+async function submitAuth(mode) {
+  const email = $('authEmail')?.value?.trim();
+  const password = $('authPassword')?.value || '';
+  $('authHint').textContent = mode === 'register' ? 'Konto wird erstellt…' : 'Login läuft…';
+  try {
+    const res = await fetch(`${getBackendUrl()}/api/auth/${mode}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error(data?.error || 'Login fehlgeschlagen.');
+    await saveAuth({ token: data.token, user: data.user });
+    $('authPassword').value = '';
+    $('authHint').textContent = 'Angemeldet.';
+    await refreshUsage();
+    render();
+  } catch (error) {
+    $('authHint').textContent = error.message || 'Login fehlgeschlagen.';
+  }
+}
+async function logout() {
+  await saveAuth({ token: null, user: null });
+  await refreshUsage();
+  render();
+}
+async function refreshMe() {
+  if (!state.auth?.token) return;
+  try {
+    const res = await fetch(`${getBackendUrl()}/api/auth/me`, { headers: authHeaders() });
+    if (!res.ok) throw new Error('not logged in');
+    const data = await res.json();
+    await saveAuth({ token: state.auth.token, user: data.user });
+  } catch {
+    await saveAuth({ token: null, user: null });
+  }
+}
+
 function renderUsage() {
   const usage = state.usage || { plan: 'free', used: 0, limit: 10, remaining: 10, plusPrice: '3,99 € / Monat' };
   const isPlus = usage.plan === 'plus'; $('planName').textContent = isPlus ? 'Remy Plus' : 'Remy Free';
@@ -156,38 +210,19 @@ function renderUsage() {
   $('usageBar').style.width = `${Math.min(100, Math.round((used / limit) * 100))}%`; $('upgradeBtn').textContent = 'Upgrade';
 }
 async function openUpgrade() {
-  const price = state.usage?.plusPrice || state.config?.plusPrice || '3,99 € / Monat';
-  let link = state.config?.paymentLink || '';
-  if (!link) {
-    await refreshConfig();
-    link = state.config?.paymentLink || '';
-  }
-  if (link && /^https:\/\//i.test(link)) {
-    chrome.tabs.create({ url: link });
-    return;
-  }
-  $('answer').innerHTML = `<span class="ai-label fallback-label">Upgrade noch nicht aktiv</span>
-Der Zahlungslink ist im Backend noch nicht gesetzt. Trage in Render bei den Environment Variables STRIPE_PAYMENT_LINK ein.
-
-Remy Plus: ${escapeHtml(price)} für 100 Fragen pro Monat und mehr Komfort.`;
-}
-
-async function refreshState() { const [response, local] = await Promise.all([send({ type: 'OMNI_GET_STATE' }), storageGet(['omni_ai'])]); if (response?.ok) { const omniAi = local.omni_ai || { backendUrl: DEFAULT_BACKEND_URL }; state = { ...response, omni_ai: omniAi, usage: state.usage }; await ensureUserId(); render(); } }
-async function refreshConfig() {
   try {
-    const res = await fetch(`${getBackendUrl()}/api/config`, { method: 'GET' });
-    if (!res.ok) throw new Error('config unavailable');
-    const config = await res.json();
-    state.config = config;
-    await storageSet({ remy_config_cache: config });
-    return config;
+    const res = await fetch(`${getBackendUrl()}/api/checkout-link`, { headers: authHeaders() });
+    if (!res.ok) throw new Error('checkout unavailable');
+    const data = await res.json();
+    if (!data?.url) throw new Error('missing url');
+    chrome.tabs.create({ url: data.url });
   } catch {
-    const cached = await storageGet(['remy_config_cache']);
-    state.config = cached.remy_config_cache || null;
-    return state.config;
+    const price = state.usage?.plusPrice || '3,99 € / Monat';
+    $('answer').innerHTML = `<span class="ai-label fallback-label">Upgrade gerade nicht verfügbar</span>\nDer Zahlungslink ist noch nicht eingerichtet. Plus kostet ${escapeHtml(price)} für 100 Fragen pro Monat und mehr Komfort.`;
   }
 }
-async function refreshUsage() { try { const userId = await ensureUserId(); const res = await fetch(`${getBackendUrl()}/api/usage`, { headers: { 'X-Omni-User-Id': userId } }); if (!res.ok) throw new Error('usage unavailable'); const payload = await res.json(); state.usage = payload.usage; await cacheUsage(state.usage); } catch { state.usage = await getCachedUsage() || { plan: 'free', used: 0, limit: 10, remaining: 10, plusPrice: '3,99 € / Monat' }; } renderUsage(); }
+async function refreshState() { await loadAuth(); const [response, local] = await Promise.all([send({ type: 'OMNI_GET_STATE' }), storageGet(['omni_ai'])]); if (response?.ok) { const omniAi = local.omni_ai || { backendUrl: DEFAULT_BACKEND_URL }; state = { ...response, omni_ai: omniAi, usage: state.usage }; await ensureUserId(); render(); } }
+async function refreshUsage() { try { const res = await fetch(`${getBackendUrl()}/api/usage`, { headers: await requestHeaders() }); if (!res.ok) throw new Error('usage unavailable'); const payload = await res.json(); state.usage = payload.usage; await cacheUsage(state.usage); } catch { state.usage = await getCachedUsage() || { plan: 'free', used: 0, limit: 10, remaining: 10, plusPrice: '3,99 € / Monat' }; } renderUsage(); }
 async function checkBackend() { try { const res = await fetch(`${getBackendUrl()}/health`, { method: 'GET' }); if (!res.ok) throw new Error('not ok'); const data = await res.json(); setAiStatus(Boolean(data?.ok && data?.hasKey), data?.hasKey ? 'KI bereit' : 'KI später erneut'); } catch { setAiStatus(false, 'KI gerade nicht erreichbar'); } }
 function setAiStatus(ok, text) { const el = $('aiStatus'); el.classList.toggle('ok', ok); el.classList.toggle('off', !ok); el.textContent = text || (ok ? 'KI bereit' : 'KI gerade nicht erreichbar'); }
 function initials(text) { const clean = String(text || '?').replace(/^www\./, '').trim(); return clean ? clean[0].toUpperCase() : '?'; }
@@ -196,12 +231,15 @@ function escapeHtml(str) { return String(str || '').replaceAll('&','&amp;').repl
 function escapeRegExp(str) { return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
 async function init() {
-  await refreshState(); await checkBackend(); await refreshConfig(); await refreshUsage();
+  await refreshState(); await refreshMe(); await checkBackend(); await refreshUsage();
   $('startOnboarding').addEventListener('click', async () => { let response = await send({ type: 'OMNI_SET_AUTO', value: true }); if (response?.ok) state.settings = response.settings; response = await send({ type: 'OMNI_SET_ONBOARDING_SEEN', value: true }); if (response?.ok) state.settings = response.settings; render(); });
   $('pauseOnboarding').addEventListener('click', async () => { let response = await send({ type: 'OMNI_SET_AUTO', value: false }); if (response?.ok) state.settings = response.settings; response = await send({ type: 'OMNI_SET_ONBOARDING_SEEN', value: true }); if (response?.ok) state.settings = response.settings; render(); });
   $('toggleAuto').addEventListener('click', async () => { const next = !(state.settings?.autoRemember !== false); const response = await send({ type: 'OMNI_SET_AUTO', value: next }); if (response?.ok) { state.settings = response.settings; render(); } });
   $('ask').addEventListener('click', () => askMemory($('question').value));
   $('upgradeBtn').addEventListener('click', openUpgrade);
+  $('loginBtn')?.addEventListener('click', () => submitAuth('login'));
+  $('registerBtn')?.addEventListener('click', () => submitAuth('register'));
+  $('logoutBtn')?.addEventListener('click', logout);
   $('question').addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); askMemory($('question').value); } });
   document.querySelectorAll('.chip').forEach(chip => chip.addEventListener('click', () => { $('question').value = chip.dataset.question || ''; askMemory($('question').value); }));
   $('toggleSettings').addEventListener('click', () => $('settingsPanel').classList.toggle('hidden'));

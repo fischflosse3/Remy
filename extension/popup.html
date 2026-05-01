@@ -78,6 +78,7 @@
       <div id="settingsPanel" class="settings-panel hidden">
         <div class="settings-tabs">
           <button class="settings-tab active" data-tab="privacyTab">Nicht merken</button>
+          <button class="settings-tab" data-tab="accountTab">Konto</button>
           <button class="settings-tab" data-tab="trustTab">Datenschutz</button>
         </div>
 
@@ -96,6 +97,27 @@
             <div class="ignored-list-wrap">
               <strong>Ignorierte Websites</strong>
               <div id="ignoredDomains" class="ignored-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="accountTab" class="settings-tab-content hidden">
+          <div class="settings-block account-block">
+            <h3>Konto</h3>
+            <p id="accountStatus">Melde dich an, damit Remy deine Fragen deinem Konto zuordnen kann.</p>
+            <div id="authForm" class="auth-form">
+              <input id="authEmail" type="email" autocomplete="email" placeholder="E-Mail" />
+              <input id="authPassword" type="password" autocomplete="current-password" placeholder="Passwort, min. 8 Zeichen" />
+              <div class="auth-actions">
+                <button id="loginBtn" class="primary-btn">Einloggen</button>
+                <button id="registerBtn" class="secondary-btn muted-btn">Konto erstellen</button>
+              </div>
+              <small id="authHint">Deine gespeicherten Browser-Erinnerungen bleiben lokal. Das Konto wird für Limits und Plus gebraucht.</small>
+            </div>
+            <div id="accountBox" class="account-box hidden">
+              <strong id="accountEmail"></strong>
+              <span id="accountPlan"></span>
+              <button id="logoutBtn" class="secondary-btn muted-btn">Abmelden</button>
             </div>
           </div>
         </div>
