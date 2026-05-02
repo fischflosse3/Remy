@@ -157,6 +157,30 @@ app.get('/checkout/cancel', (_req, res) => {
   res.type('html').send('<!doctype html><meta charset="utf-8"><title>Remy Plus</title><body style="font-family:system-ui;padding:40px;background:#f5fbff;color:#203a57"><h1>Zahlung abgebrochen</h1><p>Du kannst jederzeit in Remy erneut auf Upgrade klicken.</p></body>');
 });
 
+app.post('/api/create-customer-portal-session', async (req, res) => {
+  try {
+    const identity = await getIdentity(req);
+    if (!identity.user) return res.status(401).json({ error: 'Bitte melde dich zuerst an, um dein Abo zu verwalten.' });
+    if (!stripe) return res.status(404).json({ error: 'Stripe ist noch nicht konfiguriert.' });
+
+    const store = await readUsersStore();
+    const user = store.usersByEmail[identity.user.email];
+    if (!user?.stripeCustomerId) {
+      return res.status(404).json({ error: 'Für dieses Konto wurde noch kein aktives Stripe-Abo gefunden.' });
+    }
+
+    const returnUrl = process.env.STRIPE_CUSTOMER_PORTAL_RETURN_URL || 'https://remy-backend-uqrf.onrender.com/checkout/success';
+    const session = await stripe.billingPortal.sessions.create({
+      customer: user.stripeCustomerId,
+      return_url: returnUrl
+    });
+    res.json({ ok: true, url: session.url });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Abo-Verwaltung konnte gerade nicht geöffnet werden. Prüfe, ob das Stripe Customer Portal aktiviert ist.' });
+  }
+});
+
 app.get('/api/usage', async (req, res) => {
   const identity = await getIdentity(req);
   const usage = await getUsage(identity.userId, identity.plan);

@@ -162,6 +162,7 @@ function renderAuth() {
     $('accountEmail').textContent = user.email || '';
     $('accountPlan').textContent = (user.plan === 'plus') ? 'Remy Plus' : 'Remy Free';
   }
+  $('logoutBtn')?.classList.toggle('hidden', !user);
 
   const footerLogin = $('footerLoginBtn');
   const footerLogout = $('footerLogoutBtn');
@@ -216,11 +217,27 @@ async function refreshMe() {
 
 function renderUsage() {
   const usage = state.usage || { plan: 'free', used: 0, limit: 10, remaining: 10, plusPrice: '3,99 € / Monat' };
-  const isPlus = usage.plan === 'plus'; $('planName').textContent = isPlus ? 'Remy Plus' : 'Remy Free';
-  if (isPlus) { $('usageText').textContent = 'Plus aktiv · 100 Fragen pro Monat und mehr Komfort.'; $('usageBar').style.width = '100%'; $('upgradeBtn').textContent = 'Plus aktiv'; return; }
+  const isPlus = usage.plan === 'plus';
+  const upgradeBtn = $('upgradeBtn');
+  const manageBtn = $('manageBillingBtn');
+  $('planName').textContent = isPlus ? 'Remy Plus' : 'Remy Free';
+  if (isPlus) {
+    const used = Number(usage.used || 0), limit = Number(usage.limit || 100), remaining = Math.max(0, Number(usage.remaining ?? (limit - used)));
+    $('usageText').textContent = `Plus aktiv · ${remaining} von ${limit} Fragen diesen Monat übrig.`;
+    $('usageBar').style.width = `${Math.min(100, Math.round((used / limit) * 100))}%`;
+    upgradeBtn.textContent = 'Plus aktiv';
+    upgradeBtn.disabled = true;
+    upgradeBtn.classList.add('is-plus');
+    manageBtn?.classList.remove('hidden');
+    return;
+  }
   const used = Number(usage.used || 0), limit = Number(usage.limit || 10), remaining = Math.max(0, Number(usage.remaining ?? (limit - used)));
   $('usageText').textContent = `${remaining} von ${limit} kostenlosen Fragen übrig · Plus ${usage.plusPrice || '3,99 € / Monat'}`;
-  $('usageBar').style.width = `${Math.min(100, Math.round((used / limit) * 100))}%`; $('upgradeBtn').textContent = 'Upgrade';
+  $('usageBar').style.width = `${Math.min(100, Math.round((used / limit) * 100))}%`;
+  upgradeBtn.textContent = 'Upgrade';
+  upgradeBtn.disabled = false;
+  upgradeBtn.classList.remove('is-plus');
+  manageBtn?.classList.add('hidden');
 }
 async function openUpgrade() {
   if (!state.auth?.token) {
@@ -244,7 +261,39 @@ async function openUpgrade() {
     $('answer').innerHTML = `<span class="ai-label fallback-label">Upgrade gerade nicht verfügbar</span>\n${escapeHtml(error.message || `Plus kostet ${price} für 100 Fragen pro Monat und mehr Komfort.`)}`;
   }
 }
-async function refreshState() { await loadAuth(); const [response, local] = await Promise.all([send({ type: 'OMNI_GET_STATE' }), storageGet(['omni_ai'])]); if (response?.ok) { const omniAi = local.omni_ai || { backendUrl: DEFAULT_BACKEND_URL }; state = { ...response, omni_ai: omniAi, usage: state.usage }; await ensureUserId(); render(); } }
+
+async function openBillingPortal() {
+  if (!state.auth?.token) {
+    openAccountTab();
+    $('authHint').textContent = 'Bitte melde dich an, um dein Abo zu verwalten.';
+    return;
+  }
+  try {
+    const res = await fetch(`${getBackendUrl()}/api/create-customer-portal-session`, {
+      method: 'POST',
+      headers: await requestHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({})
+    });
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error(data?.error || 'Abo-Verwaltung ist gerade nicht verfügbar.');
+    if (!data?.url) throw new Error('Abo-Verwaltungslink fehlt.');
+    chrome.tabs.create({ url: data.url });
+  } catch (error) {
+    $('answer').innerHTML = `<span class="ai-label fallback-label">Abo-Verwaltung</span>
+${escapeHtml(error.message || 'Die Abo-Verwaltung konnte gerade nicht geöffnet werden.')}`;
+  }
+}
+
+async function refreshState() {
+  const auth = await loadAuth();
+  const [response, local] = await Promise.all([send({ type: 'OMNI_GET_STATE' }), storageGet(['omni_ai'])]);
+  if (response?.ok) {
+    const omniAi = local.omni_ai || { backendUrl: DEFAULT_BACKEND_URL };
+    state = { ...response, omni_ai: omniAi, usage: state.usage, auth };
+    await ensureUserId();
+    render();
+  }
+}
 async function refreshUsage() { try { const res = await fetch(`${getBackendUrl()}/api/usage`, { headers: await requestHeaders() }); if (!res.ok) throw new Error('usage unavailable'); const payload = await res.json(); state.usage = payload.usage; await cacheUsage(state.usage); } catch { state.usage = await getCachedUsage() || { plan: 'free', used: 0, limit: 10, remaining: 10, plusPrice: '3,99 € / Monat' }; } renderUsage(); }
 async function checkBackend() { try { const res = await fetch(`${getBackendUrl()}/health`, { method: 'GET' }); if (!res.ok) throw new Error('not ok'); const data = await res.json(); setAiStatus(Boolean(data?.ok && data?.hasKey), data?.hasKey ? 'KI bereit' : 'KI später erneut'); } catch { setAiStatus(false, 'KI gerade nicht erreichbar'); } }
 function setAiStatus(ok, text) { const el = $('aiStatus'); el.classList.toggle('ok', ok); el.classList.toggle('off', !ok); el.textContent = text || (ok ? 'KI bereit' : 'KI gerade nicht erreichbar'); }
@@ -270,6 +319,7 @@ async function init() {
   $('toggleAuto').addEventListener('click', async () => { const next = !(state.settings?.autoRemember !== false); const response = await send({ type: 'OMNI_SET_AUTO', value: next }); if (response?.ok) { state.settings = response.settings; render(); } });
   $('ask').addEventListener('click', () => askMemory($('question').value));
   $('upgradeBtn').addEventListener('click', openUpgrade);
+  $('manageBillingBtn')?.addEventListener('click', openBillingPortal);
   $('onboardingLoginBtn')?.addEventListener('click', openAccountTab);
   $('footerLoginBtn')?.addEventListener('click', openAccountTab);
   $('loginBtn')?.addEventListener('click', () => submitAuth('login'));
