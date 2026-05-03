@@ -20,12 +20,39 @@ async function init(){
   $('blockCurrentSite').onclick=async()=>{const r=await send({type:'OMNI_BLOCK_CURRENT_SITE'}); if(r?.ok){state.settings=r.settings;render();$('liveNotice').classList.remove('hidden');$('liveNotice').textContent='Diese Website wird ab jetzt nicht mehr gemerkt.';}};
   $('clearAll').onclick=async()=>{ if(!confirm('Alle lokalen Erinnerungen löschen?'))return; await send({type:'OMNI_CLEAR_ALL'}); state.pages=[]; render(); };
 }
-async function refreshAll(){ const [st, auth] = await Promise.all([send({type:'OMNI_GET_STATE'}), refreshAuth()]); if(st?.ok){state={...state,...st};} render(); await checkBackend(); if(state.loggedIn) await refreshUsage(); }
+async function refreshAll(){
+  const st = await send({type:'OMNI_GET_STATE'});
+  if(st?.ok){
+    const preservedUsage = state.usage;
+    state={...state,...st};
+    if(preservedUsage && !st.usage) state.usage = preservedUsage;
+  }
+  await refreshAuth();
+  render();
+  await checkBackend();
+  if(state.loggedIn) await refreshUsage();
+}
 async function refreshAuth(){ const r=await send({type:'REMY_GET_AUTH'}); state.loggedIn=Boolean(r?.loggedIn); state.auth=r?.auth||null; if(r?.usage) state.usage=r.usage; return r; }
 async function refreshUsage(){ try{const res=await fetch(`${getBackendUrl()}/api/usage`,{headers:authHeaders()}); if(res.ok){const d=await res.json(); state.usage=d.usage; renderUsage();}}catch{} }
 async function checkBackend(){ try{const res=await fetch(`${getBackendUrl()}/health`); const d=await res.json(); setAiStatus(d.ok&&d.hasKey,d.hasKey?'KI bereit':'KI später erneut');}catch{setAiStatus(false,'KI nicht erreichbar');}}
 function setMode(mode){ state.mode=mode==='public'?'public':'local'; send({type:'REMY_SET_MODE',mode:state.mode}); renderMode(); $('question').focus(); }
-async function ask(question){ question=String(question||'').trim(); if(!question)return; $('answer').innerHTML='<span class="ai-label">Remy denkt…</span>'; const r=await send({type:'REMY_SIDEBAR_ASK',question,mode:state.mode}); if(!r?.ok){$('answer').textContent=r?.error||'Remy konnte nicht antworten.'; if(r?.loginRequired) send({type:'REMY_START_LOGIN'}); return;} if(r.usage){state.usage=r.usage;renderUsage();} $('answer').innerHTML=`<span class="ai-label">Antwort</span>\n${escapeHtml(r.answer||'Keine Antwort.')}${renderSources(r.sources||[])}`; bindLinks(); $('question').value=''; }
+async function ask(question){
+  question=String(question||'').trim();
+  if(!question)return;
+  $('answer').innerHTML='<span class="ai-label">Remy denkt…</span>';
+  const r=await send({type:'REMY_SIDEBAR_ASK',question,mode:state.mode});
+  if(!r?.ok){
+    $('answer').textContent=r?.error||'Remy konnte nicht antworten.';
+    if(r?.usage){state.usage=r.usage;renderUsage();}
+    if(r?.loginRequired) send({type:'REMY_START_LOGIN'});
+    return;
+  }
+  if(r.usage){state.usage=r.usage;renderUsage();}
+  await refreshUsage();
+  $('answer').innerHTML=`<span class="ai-label">Antwort</span>\n${escapeHtml(r.answer||'Keine Antwort.')}${renderSources(r.sources||[])}`;
+  bindLinks();
+  $('question').value='';
+}
 function render(){ const logged=state.loggedIn; $('loginGate').classList.toggle('hidden',logged); $('mainApp').classList.toggle('hidden',!logged); if(!logged)return; const autoOn=state.settings?.autoRemember!==false; $('toggleAuto').classList.toggle('off',!autoOn); $('autoStatus').textContent=autoOn?'Automatik aktiv':'Automatik pausiert'; $('memoryCount').textContent=`${(state.pages||[]).length} lokale Erinnerungen`; $('accountText').textContent=state.auth?.user?.email?`Angemeldet als ${state.auth.user.email}`:'Angemeldet'; renderMode(); renderUsage(); renderPrivacy(); renderMemories(); }
 function renderMode(){ const pub=state.mode==='public'; $('modeLocal').classList.toggle('active',!pub); $('modePublic').classList.toggle('active',pub); $('modeHelp').textContent=pub?'Allgemeine Frage nutzt KI-Wissen. Keine privaten Daten eingeben.':'Browser-Suche nutzt nur deine gespeicherten Seiten.'; }
 function renderUsage(){ const u=state.usage||{plan:'free',used:0,limit:10,remaining:10,plusPrice:'3,99 € / Monat'}; const isPaid=u.plan==='plus'||u.plan==='lifetime'; $('planName').textContent=isPaid?(u.plan==='lifetime'?'Remy Lifetime':'Remy Plus'):'Remy Free'; const rem=u.remaining ?? Math.max(0,u.limit-u.used); $('usageText').textContent=isPaid?`${rem} von ${u.limit} Fragen diesen Monat übrig`:`${rem} von ${u.limit} Free-Fragen übrig · Plus ${u.plusPrice||'3,99 € / Monat'}`; $('usageBar').style.width=`${Math.min(100,Math.round((u.used/u.limit)*100))}%`; $('upgradeBtn').textContent=isPaid?'Plus aktiv':'Upgrade'; $('upgradeBtn').disabled=isPaid; $('manageSubscription').classList.toggle('hidden',!isPaid); }

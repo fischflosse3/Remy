@@ -252,7 +252,7 @@ setInterval(() => {
     <div id="remy-radial-menu" class="remy-radial-menu hidden" aria-label="Remy Schnellaktionen">
       <button id="remy-radial-local" class="remy-radial-action local" title="Browser suchen"><span>Browser</span></button>
       <button id="remy-radial-public" class="remy-radial-action public" title="Allgemein fragen"><span>Allgemein</span></button>
-      <button id="remy-radial-ignore" class="remy-radial-action ignore" title="Diese Seite nie merken"><span>Nie merken</span></button>
+      <button id="remy-radial-ignore" class="remy-radial-action ignore" title="Diese Seite nie merken"><span id="remy-ignore-label">Nie merken</span></button>
     </div>
     <section id="remy-side-panel" class="remy-side-panel hidden" aria-label="Remy Chat">
       <header class="remy-side-header">
@@ -295,7 +295,9 @@ setInterval(() => {
       closeChat();
       return;
     }
+    const willOpen = $r('remy-radial-menu').classList.contains('hidden');
     $r('remy-radial-menu').classList.toggle('hidden');
+    if (willOpen) refreshIgnoreButton();
   });
   $r('remy-radial-local').addEventListener('click', () => openChat('local'));
   $r('remy-radial-public').addEventListener('click', () => openChat('public'));
@@ -361,14 +363,24 @@ setInterval(() => {
     const remaining = usage.remaining === null || usage.remaining === undefined ? usage.limit - usage.used : usage.remaining;
     $r('remy-side-usage').textContent = `${Math.max(0, remaining)} von ${usage.limit} Fragen übrig · ${usage.plan === 'free' ? 'Free' : usage.plan}`;
   }
-  function refreshUsage() { chrome.runtime.sendMessage({ type: 'REMY_GET_AUTH' }, r => updateUsage(r?.usage)); }
+  function refreshUsage() { chrome.runtime.sendMessage({ type: 'REMY_GET_AUTH' }, r => { if (r?.usage) updateUsage(r.usage); }); }
+
+  async function refreshIgnoreButton() {
+    chrome.runtime.sendMessage({ type: 'REMY_GET_CURRENT_SITE_MEMORY_STATUS' }, (response) => {
+      const label = $r('remy-ignore-label');
+      if (!label) return;
+      label.textContent = response?.ignored ? 'Wieder merken' : 'Nie merken';
+      $r('remy-radial-ignore').title = response?.ignored ? 'Diese Seite wieder merken' : 'Diese Seite nie merken';
+    });
+  }
 
   async function ignoreCurrentSite() {
     $r('remy-radial-menu').classList.add('hidden');
-    chrome.runtime.sendMessage({ type: 'REMY_IGNORE_CURRENT_SITE_AND_DELETE' }, (response) => {
-      const msg = response?.ok ? `Diese Website wird nicht mehr gemerkt. ${response.deleted || 0} alte Erinnerungen wurden gelöscht.` : (response?.error || 'Website konnte nicht blockiert werden.');
+    chrome.runtime.sendMessage({ type: 'REMY_TOGGLE_CURRENT_SITE_MEMORY' }, (response) => {
+      const msg = response?.ok ? (response.message || (response.action === 'allowed' ? 'Diese Website wird wieder gemerkt.' : 'Diese Website wird nicht mehr gemerkt.')) : (response?.error || 'Website-Einstellung konnte nicht geändert werden.');
       openChat('local');
       pushMessage('bot', msg);
+      refreshIgnoreButton();
     });
   }
 
@@ -389,7 +401,7 @@ setInterval(() => {
       }
       replaceBot(loadingIndex, response.answer || 'Keine Antwort erhalten.', response.sources || null, activeMode);
       if (response.usage) updateUsage(response.usage);
-      refreshUsage();
+      setTimeout(refreshUsage, 250);
     });
   }
 

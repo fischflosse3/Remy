@@ -178,12 +178,73 @@ function rateLimitMiddleware(req, res, next) { const now = Date.now(); const key
 
 async function readStore() { try { return JSON.parse(await fs.readFile(storeFile, 'utf8')); } catch { return { users: {}, usage: {} }; } }
 async function writeStore(store) { await fs.mkdir(dataDir, { recursive: true }); await fs.writeFile(storeFile, JSON.stringify(store, null, 2)); }
-async function findUserByEmail(email) { if (supabase) { try { const { data } = await supabase.from('remy_users').select('*').eq('email', email).maybeSingle(); if (data) return data; } catch (e) { console.warn('Supabase user email failed', e.message); } } const s = await readStore(); return Object.values(s.users).find(u => u.email === email) || null; }
-async function findUserById(id) { if (supabase) { try { const { data } = await supabase.from('remy_users').select('*').eq('id', id).maybeSingle(); if (data) return data; } catch (e) { console.warn('Supabase user id failed', e.message); } } const s = await readStore(); return s.users[id] || null; }
-async function createUser(email, password_hash) { const user = { id: crypto.randomUUID(), email, password_hash, plan: 'free', created_at: new Date().toISOString() }; if (supabase) { try { const { data, error } = await supabase.from('remy_users').insert(user).select('*').single(); if (error) throw error; return data; } catch (e) { console.warn('Supabase create failed', e.message); } } const s = await readStore(); s.users[user.id] = user; await writeStore(s); return user; }
-async function deleteUser(id) { if (supabase) { try { await supabase.from('remy_usage').delete().eq('user_id', id); await supabase.from('remy_users').delete().eq('id', id); return; } catch (e) { console.warn('Supabase delete failed', e.message); } } const s = await readStore(); delete s.users[id]; delete s.usage[id]; await writeStore(s); }
-async function getUsage(userId, plan = 'free') { const month = currentMonth(); if (supabase) { try { const { data } = await supabase.from('remy_usage').select('*').eq('user_id', userId).eq('month', month).maybeSingle(); if (data) return { ...data, plan }; const row = { user_id: userId, month, used: 0 }; await supabase.from('remy_usage').insert(row); return { ...row, plan }; } catch (e) { console.warn('Supabase usage failed', e.message); } } const s = await readStore(); const key = `${userId}:${month}`; s.usage[key] ||= { user_id: userId, month, used: 0 }; await writeStore(s); return { ...s.usage[key], plan }; }
-async function incrementUsage(userId, plan = 'free') { const usage = await getUsage(userId, plan); usage.used = Number(usage.used || 0) + 1; if (supabase) { try { await supabase.from('remy_usage').upsert({ user_id: userId, month: usage.month, used: usage.used }, { onConflict: 'user_id,month' }); return { ...usage, plan }; } catch (e) { console.warn('Supabase increment failed', e.message); } } const s = await readStore(); s.usage[`${userId}:${usage.month}`] = usage; await writeStore(s); return { ...usage, plan }; }
+async function findUserByEmail(email) {
+  if (supabase) {
+    const { data, error } = await supabase.from('remy_users').select('*').eq('email', email).maybeSingle();
+    if (error) throw new Error(`Supabase Nutzerabfrage fehlgeschlagen: ${error.message}`);
+    return data || null;
+  }
+  const s = await readStore(); return Object.values(s.users).find(u => u.email === email) || null;
+}
+async function findUserById(id) {
+  if (supabase) {
+    const { data, error } = await supabase.from('remy_users').select('*').eq('id', id).maybeSingle();
+    if (error) throw new Error(`Supabase Nutzerabfrage fehlgeschlagen: ${error.message}`);
+    return data || null;
+  }
+  const s = await readStore(); return s.users[id] || null;
+}
+async function createUser(email, password_hash) {
+  const user = { id: crypto.randomUUID(), email, password_hash, plan: 'free', created_at: new Date().toISOString() };
+  if (supabase) {
+    const { data, error } = await supabase.from('remy_users').insert(user).select('*').single();
+    if (error) throw new Error(`Supabase Registrierung fehlgeschlagen: ${error.message}`);
+    return data;
+  }
+  const s = await readStore(); s.users[user.id] = user; await writeStore(s); return user;
+}
+async function deleteUser(id) {
+  if (supabase) {
+    let { error } = await supabase.from('remy_usage').delete().eq('user_id', id);
+    if (error) throw new Error(`Supabase Nutzung löschen fehlgeschlagen: ${error.message}`);
+    ({ error } = await supabase.from('remy_users').delete().eq('id', id));
+    if (error) throw new Error(`Supabase Konto löschen fehlgeschlagen: ${error.message}`);
+    return;
+  }
+  const s = await readStore(); delete s.users[id]; delete s.usage[id]; await writeStore(s);
+}
+async function getUsage(userId, plan = 'free') {
+  const month = currentMonth();
+  if (supabase) {
+    const { data, error } = await supabase.from('remy_usage').select('*').eq('user_id', userId).eq('month', month).maybeSingle();
+    if (error) throw new Error(`Supabase Nutzung laden fehlgeschlagen: ${error.message}`);
+    if (data) return { ...data, plan };
+    const row = { user_id: userId, month, used: 0 };
+    const { data: created, error: insertError } = await supabase.from('remy_usage').insert(row).select('*').single();
+    if (insertError) {
+      // Falls zwei Fenster gleichzeitig anlegen, nochmal laden statt zurückzusetzen.
+      const { data: retry, error: retryError } = await supabase.from('remy_usage').select('*').eq('user_id', userId).eq('month', month).maybeSingle();
+      if (retryError || !retry) throw new Error(`Supabase Nutzung erstellen fehlgeschlagen: ${insertError.message}`);
+      return { ...retry, plan };
+    }
+    return { ...(created || row), plan };
+  }
+  const s = await readStore(); const key = `${userId}:${month}`; s.usage[key] ||= { user_id: userId, month, used: 0 }; await writeStore(s); return { ...s.usage[key], plan };
+}
+async function incrementUsage(userId, plan = 'free') {
+  const usage = await getUsage(userId, plan);
+  const nextUsed = Number(usage.used || 0) + 1;
+  if (supabase) {
+    const { data, error } = await supabase
+      .from('remy_usage')
+      .upsert({ user_id: userId, month: usage.month, used: nextUsed }, { onConflict: 'user_id,month' })
+      .select('*')
+      .single();
+    if (error) throw new Error(`Supabase Nutzung speichern fehlgeschlagen: ${error.message}`);
+    return { ...(data || { ...usage, used: nextUsed }), plan };
+  }
+  const s = await readStore(); s.usage[`${userId}:${usage.month}`] = { ...usage, used: nextUsed }; await writeStore(s); return { ...s.usage[`${userId}:${usage.month}`], plan };
+}
 
 function renderAuthPage(deviceId) {
   return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Remy Login</title><style>
