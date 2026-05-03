@@ -239,7 +239,7 @@ setInterval(() => {
   }
 }, 1000);
 
-// Remy Seiten-Popup mit direktem Chat
+// Remy Seiten-Popup mit radialem Schnellmenü und getrennten Chats
 (function initRemySideChat() {
   if (window.__remySideChatInstalled) return;
   window.__remySideChatInstalled = true;
@@ -249,22 +249,21 @@ setInterval(() => {
   root.id = 'remy-side-root';
   root.innerHTML = `
     <button id="remy-float-button" title="Remy öffnen"><img src="${chrome.runtime.getURL('logo.svg')}" alt="Remy"></button>
+    <div id="remy-radial-menu" class="remy-radial-menu hidden" aria-label="Remy Schnellaktionen">
+      <button id="remy-radial-local" class="remy-radial-action local" title="Lokal fragen"><span>Lokal</span></button>
+      <button id="remy-radial-public" class="remy-radial-action public" title="Öffentlich fragen"><span>Öffentlich</span></button>
+      <button id="remy-radial-ignore" class="remy-radial-action ignore" title="Diese Seite nie merken"><span>Nie merken</span></button>
+    </div>
     <section id="remy-side-panel" class="remy-side-panel hidden" aria-label="Remy Chat">
       <header class="remy-side-header">
         <div><img src="${chrome.runtime.getURL('logo.svg')}" alt=""><strong>Remy</strong><span id="remy-side-mode-label">Lokal</span></div>
         <button id="remy-side-close">×</button>
       </header>
-      <div class="remy-mode-pick">
-        <button id="remy-local-mode" class="active">Lokal fragen</button>
-        <button id="remy-public-mode">Öffentlich fragen</button>
-      </div>
       <p id="remy-mode-help" class="remy-mode-help">Lokal nutzt deine gespeicherten Erinnerungen und diese sichere Seite.</p>
       <div id="remy-side-usage" class="remy-side-usage">Fragen werden geladen…</div>
-      <div id="remy-side-messages" class="remy-side-messages">
-        <div class="remy-bubble remy-bot">Wähle einen Modus und frag direkt hier.</div>
-      </div>
+      <div id="remy-side-messages" class="remy-side-messages"></div>
       <form id="remy-side-form" class="remy-side-form">
-        <textarea id="remy-side-input" rows="2" placeholder="Was möchtest du wissen?"></textarea>
+        <textarea id="remy-side-input" rows="2" placeholder="Lokal fragen…"></textarea>
         <button type="submit">↵</button>
       </form>
     </section>`;
@@ -273,51 +272,89 @@ setInterval(() => {
   const style = document.createElement('style');
   style.textContent = `
     #remy-side-root{position:fixed!important;z-index:2147483647!important;right:18px!important;bottom:18px!important;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important;color:#1f2937!important}
-    #remy-float-button{width:68px;height:68px;border:0;border-radius:24px;background:linear-gradient(135deg,#fff7ed,#eef2ff);box-shadow:0 18px 45px rgba(79,70,229,.25);display:grid;place-items:center;cursor:pointer;padding:8px;transition:.18s transform,.18s box-shadow}
-    #remy-float-button:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 22px 55px rgba(79,70,229,.33)}
-    #remy-float-button img{width:54px;height:54px;object-fit:contain;display:block}
-    .remy-side-panel{position:absolute;right:0;bottom:82px;width:min(360px,calc(100vw - 34px));max-height:min(620px,calc(100vh - 112px));background:rgba(255,255,255,.97);backdrop-filter:blur(14px);border:1px solid rgba(124,58,237,.13);border-radius:28px;box-shadow:0 28px 90px rgba(31,41,55,.26);overflow:hidden;display:flex;flex-direction:column}.remy-side-panel.hidden{display:none}.remy-side-panel.public-mode{border-color:rgba(8,145,178,.22);box-shadow:0 28px 90px rgba(8,145,178,.22)}
-    .remy-side-header{display:flex;align-items:center;justify-content:space-between;padding:14px 14px 10px}.remy-side-header>div{display:flex;align-items:center;gap:9px}.remy-side-header img{width:34px;height:34px}.remy-side-header strong{font-size:16px}.remy-side-header span{font-size:11px;font-weight:800;border-radius:999px;background:#ede9fe;color:#6d28d9;padding:4px 8px}.remy-side-header button{border:0;background:#f3f4f6;border-radius:12px;width:30px;height:30px;cursor:pointer;font-size:18px;color:#4b5563}
-    .remy-mode-pick{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 14px}.remy-mode-pick button{border:1px solid #e5e7eb;background:#fff;border-radius:16px;padding:10px;font-weight:900;cursor:pointer;color:#374151}.remy-mode-pick button.active{background:#4f46e5;color:white;border-color:#4f46e5}.remy-mode-pick button#remy-public-mode.active{background:#0891b2;border-color:#0891b2}
-    .remy-mode-help{font-size:12px;color:#6b7280;margin:10px 16px 6px;line-height:1.35}.remy-side-usage{font-size:12px;font-weight:800;color:#4b5563;background:#f9fafb;border-top:1px solid #f3f4f6;border-bottom:1px solid #f3f4f6;padding:9px 16px}
-    .remy-side-messages{padding:14px;overflow:auto;display:flex;flex-direction:column;gap:10px;min-height:150px;max-height:38vh}.remy-bubble{border-radius:18px;padding:11px 12px;line-height:1.42;font-size:13px;white-space:pre-wrap}.remy-bot{background:#f3f4f6}.remy-user{background:#4f46e5;color:white;align-self:flex-end;max-width:84%}.remy-bot.public{background:#ecfeff}.remy-bot.local{background:#f5f3ff}.remy-source{font-size:12px;border:1px solid #e5e7eb;border-radius:14px;padding:8px;margin-top:7px;background:white}.remy-source a{color:#4f46e5;font-weight:800;text-decoration:none}
-    .remy-side-form{display:flex;gap:8px;padding:12px;background:#fff;border-top:1px solid #f3f4f6}.remy-side-form textarea{flex:1;border:1px solid #e5e7eb;border-radius:18px;padding:11px;resize:none;font:inherit;font-size:13px;outline:none}.remy-side-form textarea:focus{border-color:#a78bfa;box-shadow:0 0 0 4px #ede9fe}.remy-side-form button{width:44px;border:0;border-radius:17px;background:#111827;color:white;font-weight:900;cursor:pointer}`;
+    #remy-float-button{width:68px;height:68px;border:0;border-radius:24px;background:linear-gradient(135deg,#fff7ed,#eef2ff);box-shadow:0 18px 45px rgba(79,70,229,.25);display:grid;place-items:center;cursor:pointer;padding:8px;transition:.18s transform,.18s box-shadow;position:relative;z-index:2}
+    #remy-float-button:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 22px 55px rgba(79,70,229,.33)}#remy-float-button img{width:54px;height:54px;object-fit:contain;display:block}
+    .remy-radial-menu{position:absolute;right:7px;bottom:7px;width:178px;height:178px;pointer-events:none}.remy-radial-menu.hidden{display:none}.remy-radial-action{position:absolute;width:72px;height:72px;border:0;border-radius:24px;box-shadow:0 18px 44px rgba(31,41,55,.22);cursor:pointer;font-size:11px;font-weight:900;line-height:1.05;color:white;pointer-events:auto;display:grid;place-items:center;padding:9px;text-align:center;transition:.16s transform}.remy-radial-action:hover{transform:translateY(-2px) scale(1.04)}.remy-radial-action.local{right:0;bottom:96px;background:linear-gradient(135deg,#7c3aed,#4f46e5)}.remy-radial-action.public{right:76px;bottom:76px;background:linear-gradient(135deg,#0891b2,#0e7490)}.remy-radial-action.ignore{right:96px;bottom:0;background:linear-gradient(135deg,#f97316,#dc2626)}
+    .remy-side-panel{position:absolute;right:0;bottom:82px;width:min(360px,calc(100vw - 34px));max-height:min(570px,calc(100vh - 112px));background:rgba(255,255,255,.98);backdrop-filter:blur(14px);border:1px solid rgba(124,58,237,.13);border-radius:28px;box-shadow:0 28px 90px rgba(31,41,55,.26);overflow:hidden;display:flex;flex-direction:column}.remy-side-panel.hidden{display:none}.remy-side-panel.public-mode{border-color:rgba(8,145,178,.22);box-shadow:0 28px 90px rgba(8,145,178,.22)}.remy-side-panel.local-mode{border-color:rgba(124,58,237,.20)}
+    .remy-side-header{display:flex;align-items:center;justify-content:space-between;padding:14px 14px 9px}.remy-side-header>div{display:flex;align-items:center;gap:9px}.remy-side-header img{width:34px;height:34px}.remy-side-header strong{font-size:16px}.remy-side-header span{font-size:11px;font-weight:900;border-radius:999px;background:#ede9fe;color:#6d28d9;padding:4px 8px}.public-mode .remy-side-header span{background:#cffafe;color:#0e7490}.remy-side-header button{border:0;background:#f3f4f6;border-radius:12px;width:30px;height:30px;cursor:pointer;font-size:18px;color:#4b5563}
+    .remy-mode-help{font-size:12px;color:#6b7280;margin:0 16px 8px;line-height:1.35}.remy-side-usage{font-size:12px;font-weight:800;color:#4b5563;background:#f9fafb;border-top:1px solid #f3f4f6;border-bottom:1px solid #f3f4f6;padding:9px 16px}.public-mode .remy-side-usage{background:#ecfeff;color:#0e7490}.local-mode .remy-side-usage{background:#f5f3ff;color:#6d28d9}
+    .remy-side-messages{padding:14px;overflow:auto;display:flex;flex-direction:column;gap:10px;min-height:150px;max-height:34vh}.remy-bubble{border-radius:18px;padding:11px 12px;line-height:1.42;font-size:13px;white-space:pre-wrap}.remy-bot{background:#f3f4f6}.remy-user{background:#4f46e5;color:white;align-self:flex-end;max-width:84%}.remy-bot.public{background:#ecfeff}.remy-bot.local{background:#f5f3ff}.remy-source{font-size:12px;border:1px solid #e5e7eb;border-radius:14px;padding:8px;margin-top:7px;background:white}.remy-source a{color:#4f46e5;font-weight:800;text-decoration:none}
+    .remy-side-form{display:flex;gap:8px;padding:12px;background:#fff;border-top:1px solid #f3f4f6}.remy-side-form textarea{flex:1;border:1px solid #e5e7eb;border-radius:18px;padding:11px;resize:none;font:inherit;font-size:13px;outline:none;max-height:90px}.remy-side-form textarea:focus{border-color:#a78bfa;box-shadow:0 0 0 4px #ede9fe}.public-mode .remy-side-form textarea:focus{border-color:#67e8f9;box-shadow:0 0 0 4px #ecfeff}.remy-side-form button{width:44px;border:0;border-radius:17px;background:#111827;color:white;font-weight:900;cursor:pointer}`;
   document.documentElement.appendChild(style);
 
   const $r = (id) => root.querySelector(`#${id}`);
   let mode = 'local';
+  const histories = {
+    local: [{ who: 'bot', text: 'Lokaler Chat. Ich nutze nur deine gespeicherten Erinnerungen und sichere Seiten.' }],
+    public: [{ who: 'bot', text: 'Öffentlicher Chat. Ich nutze allgemeines KI-Wissen. Gib hier keine privaten Daten ein.' }]
+  };
 
-  $r('remy-float-button').addEventListener('click', () => $r('remy-side-panel').classList.toggle('hidden'));
+  $r('remy-float-button').addEventListener('click', () => $r('remy-radial-menu').classList.toggle('hidden'));
+  $r('remy-radial-local').addEventListener('click', () => openChat('local'));
+  $r('remy-radial-public').addEventListener('click', () => openChat('public'));
+  $r('remy-radial-ignore').addEventListener('click', ignoreCurrentSite);
   $r('remy-side-close').addEventListener('click', () => $r('remy-side-panel').classList.add('hidden'));
-  $r('remy-local-mode').addEventListener('click', () => setMode('local', true));
-  $r('remy-public-mode').addEventListener('click', () => setMode('public', true));
   $r('remy-side-form').addEventListener('submit', async (event) => { event.preventDefault(); await ask(); });
   $r('remy-side-input').addEventListener('keydown', async (event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); await ask(); } });
+
+  function openChat(next) {
+    $r('remy-radial-menu').classList.add('hidden');
+    setMode(next, true);
+    $r('remy-side-panel').classList.remove('hidden');
+  }
 
   function setMode(next, focus = false) {
     mode = next === 'public' ? 'public' : 'local';
     chrome.runtime.sendMessage({ type: 'REMY_SET_MODE', mode }, () => {});
-    $r('remy-local-mode').classList.toggle('active', mode === 'local');
-    $r('remy-public-mode').classList.toggle('active', mode === 'public');
     $r('remy-side-mode-label').textContent = mode === 'public' ? 'Öffentlich' : 'Lokal';
     $r('remy-side-panel').classList.toggle('public-mode', mode === 'public');
+    $r('remy-side-panel').classList.toggle('local-mode', mode === 'local');
     $r('remy-mode-help').textContent = mode === 'public' ? 'Öffentlich nutzt allgemeines KI-Wissen. Stelle hier keine privaten Daten rein.' : 'Lokal nutzt deine gespeicherten Erinnerungen und diese sichere Seite.';
+    $r('remy-side-input').placeholder = mode === 'public' ? 'Öffentlich fragen…' : 'Lokal fragen…';
+    renderHistory();
+    refreshUsage();
     if (focus) $r('remy-side-input').focus();
   }
 
-  function addBubble(text, who = 'bot') {
-    const div = document.createElement('div');
-    div.className = `remy-bubble ${who === 'user' ? 'remy-user' : `remy-bot ${mode}`}`;
-    div.textContent = text;
-    $r('remy-side-messages').appendChild(div);
-    $r('remy-side-messages').scrollTop = $r('remy-side-messages').scrollHeight;
-    return div;
+  function renderHistory() {
+    const box = $r('remy-side-messages');
+    box.innerHTML = '';
+    histories[mode].forEach(item => {
+      const div = document.createElement('div');
+      div.className = `remy-bubble ${item.who === 'user' ? 'remy-user' : `remy-bot ${mode}`}`;
+      div.textContent = item.text;
+      if (item.sources?.length) item.sources.slice(0, 3).forEach(source => {
+        const s = document.createElement('div');
+        s.className = 'remy-source';
+        s.innerHTML = `<strong>${escapeHtml(source.title || source.domain || 'Quelle')}</strong><br><a href="${escapeAttr(source.url || '#')}" target="_blank" rel="noreferrer">Öffnen</a>`;
+        div.appendChild(s);
+      });
+      box.appendChild(div);
+    });
+    box.scrollTop = box.scrollHeight;
   }
+
+  function pushMessage(who, text, sources = null) {
+    histories[mode].push({ who, text, sources });
+    renderHistory();
+    return histories[mode].length - 1;
+  }
+  function replaceBot(index, text, sources = null) { histories[mode][index] = { who: 'bot', text, sources }; renderHistory(); }
 
   function updateUsage(usage) {
     if (!usage) return;
     const remaining = usage.remaining === null || usage.remaining === undefined ? usage.limit - usage.used : usage.remaining;
     $r('remy-side-usage').textContent = `${Math.max(0, remaining)} von ${usage.limit} Fragen übrig · ${usage.plan === 'free' ? 'Free' : usage.plan}`;
+  }
+  function refreshUsage() { chrome.runtime.sendMessage({ type: 'REMY_GET_AUTH' }, r => updateUsage(r?.usage)); }
+
+  async function ignoreCurrentSite() {
+    $r('remy-radial-menu').classList.add('hidden');
+    chrome.runtime.sendMessage({ type: 'REMY_IGNORE_CURRENT_SITE_AND_DELETE' }, (response) => {
+      const msg = response?.ok ? `Diese Website wird nicht mehr gemerkt. ${response.deleted || 0} alte Erinnerungen wurden gelöscht.` : (response?.error || 'Website konnte nicht blockiert werden.');
+      openChat('local');
+      pushMessage('bot', msg);
+    });
   }
 
   async function ask() {
@@ -325,30 +362,17 @@ setInterval(() => {
     const question = input.value.trim();
     if (!question) return;
     input.value = '';
-    addBubble(question, 'user');
-    const loading = addBubble('Remy denkt kurz…', 'bot');
-    chrome.runtime.sendMessage({ type: 'REMY_SIDEBAR_ASK', question, mode }, (response) => {
+    const activeMode = mode;
+    pushMessage('user', question);
+    const loadingIndex = pushMessage('bot', 'Remy denkt kurz…');
+    chrome.runtime.sendMessage({ type: 'REMY_SIDEBAR_ASK', question, mode: activeMode }, (response) => {
+      if (mode !== activeMode) mode = activeMode;
       if (!response?.ok || response.loginRequired) {
-        loading.textContent = response?.error || 'Bitte melde dich zuerst an.';
-        const a = document.createElement('button');
-        a.textContent = 'Einloggen';
-        a.style.cssText = 'margin-top:8px;border:0;border-radius:12px;padding:8px 12px;background:#4f46e5;color:white;font-weight:800;cursor:pointer';
-        a.onclick = () => chrome.runtime.sendMessage({ type: 'REMY_START_LOGIN' });
-        loading.appendChild(document.createElement('br'));
-        loading.appendChild(a);
+        replaceBot(loadingIndex, response?.error || 'Bitte melde dich zuerst an.');
         return;
       }
-      loading.textContent = response.answer || 'Keine Antwort erhalten.';
+      replaceBot(loadingIndex, response.answer || 'Keine Antwort erhalten.', response.sources || null);
       updateUsage(response.usage);
-      if (Array.isArray(response.sources) && response.sources.length) {
-        response.sources.slice(0, 3).forEach(source => {
-          const box = document.createElement('div');
-          box.className = 'remy-source';
-          const url = source.url || '#';
-          box.innerHTML = `<strong>${escapeHtml(source.title || source.domain || 'Quelle')}</strong><br><a href="${escapeAttr(url)}" target="_blank" rel="noreferrer">Öffnen</a>`;
-          loading.appendChild(box);
-        });
-      }
     });
   }
 
