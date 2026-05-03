@@ -36,6 +36,32 @@ const pendingDevices = new Map();
 const rateBuckets = new Map();
 
 app.use(cors({ origin: true }));
+
+// Stripe braucht den rohen Request-Body für die Webhook-Signatur.
+// Diese Route muss vor express.json() stehen.
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    if (!stripe) return res.status(400).send('Stripe ist nicht eingerichtet.');
+
+    let event;
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
+    const signature = req.headers['stripe-signature'];
+
+    if (webhookSecret) {
+      event = stripe.webhooks.constructEvent(req.body, signature, webhookSecret);
+    } else {
+      // Nur als Entwicklungs-Fallback. In Produktion STRIPE_WEBHOOK_SECRET setzen.
+      event = JSON.parse(req.body.toString('utf8'));
+    }
+
+    await handleStripeEvent(event);
+    res.json({ received: true });
+  } catch (error) {
+    console.error('Stripe Webhook Fehler:', error.message);
+    res.status(400).send(`Webhook Error: ${error.message}`);
+  }
+});
+
 app.use(express.json({ limit: '1mb' }));
 app.use(rateLimitMiddleware);
 
@@ -146,11 +172,98 @@ app.post('/api/create-checkout-session', requireUser, async (req, res) => {
     return res.status(400).json({ error: 'Stripe ist noch nicht vollständig eingerichtet.' });
   }
   const session = await stripe.checkout.sessions.create({
-    mode: 'subscription', line_items: [{ price: stripePriceId, quantity: 1 }], customer_email: req.user.email,
-    success_url: `${publicBaseUrl}/auth?success=plus`, cancel_url: `${publicBaseUrl}/auth?cancel=1`, metadata: { remy_user_id: req.user.id }
+    mode: 'subscription',
+    line_items: [{ price: stripePriceId, quantity: 1 }],
+    customer_email: req.user.email,
+    client_reference_id: req.user.id,
+    success_url: `${publicBaseUrl}/auth?success=plus`,
+    cancel_url: `${publicBaseUrl}/auth?cancel=1`,
+    metadata: { remy_user_id: req.user.id, remy_plan: 'plus' },
+    subscription_data: { metadata: { remy_user_id: req.user.id, remy_plan: 'plus' } }
   });
   res.json({ ok: true, url: session.url });
 });
+
+
+async function handleStripeEvent(event) {
+  const object = event.data?.object || {};
+  console.log(`Stripe Event empfangen: ${event.type}`);
+
+  if (event.type === 'checkout.session.completed') {
+    const session = object;
+    const userId = session.metadata?.remy_user_id || session.client_reference_id;
+    if (!userId) throw new Error('checkout.session.completed ohne remy_user_id.');
+    await setUserBillingStatus(userId, {
+      plan: session.metadata?.remy_plan === 'lifetime' ? 'lifetime' : 'plus',
+      stripe_customer_id: typeof session.customer === 'string' ? session.customer : null
+    });
+    return;
+  }
+
+  if (event.type === 'customer.subscription.updated') {
+    const sub = object;
+    const userId = sub.metadata?.remy_user_id || await findUserIdByStripeCustomer(sub.customer);
+    if (!userId) return console.warn('Subscription update ohne passenden Remy-Nutzer.');
+    const active = ['active', 'trialing'].includes(sub.status);
+    await setUserBillingStatus(userId, {
+      plan: active ? (sub.metadata?.remy_plan === 'lifetime' ? 'lifetime' : 'plus') : 'free',
+      stripe_customer_id: typeof sub.customer === 'string' ? sub.customer : null
+    });
+    return;
+  }
+
+  if (event.type === 'customer.subscription.deleted') {
+    const sub = object;
+    const userId = sub.metadata?.remy_user_id || await findUserIdByStripeCustomer(sub.customer);
+    if (!userId) return console.warn('Subscription deleted ohne passenden Remy-Nutzer.');
+    await setUserBillingStatus(userId, {
+      plan: 'free',
+      stripe_customer_id: typeof sub.customer === 'string' ? sub.customer : null
+    });
+    return;
+  }
+
+  if (event.type === 'invoice.payment_succeeded') {
+    const invoice = object;
+    const userId = await findUserIdByStripeCustomer(invoice.customer);
+    if (userId) await setUserBillingStatus(userId, { plan: 'plus', stripe_customer_id: typeof invoice.customer === 'string' ? invoice.customer : null });
+    return;
+  }
+
+  if (event.type === 'invoice.payment_failed') {
+    console.warn('Stripe Zahlung fehlgeschlagen:', object.id || 'unbekannte Rechnung');
+  }
+}
+
+async function setUserBillingStatus(userId, patch) {
+  if (!userId) throw new Error('setUserBillingStatus ohne userId.');
+  const cleanPatch = { updated_at: new Date().toISOString() };
+  if (patch.plan) cleanPatch.plan = patch.plan;
+  if (patch.stripe_customer_id) cleanPatch.stripe_customer_id = patch.stripe_customer_id;
+
+  if (supabase) {
+    const { error } = await supabase.from('remy_users').update(cleanPatch).eq('id', userId);
+    if (error) throw new Error(`Supabase Plus-Status speichern fehlgeschlagen: ${error.message}`);
+    return;
+  }
+
+  const s = await readStore();
+  if (!s.users[userId]) throw new Error('Nutzer nicht gefunden.');
+  s.users[userId] = { ...s.users[userId], ...cleanPatch };
+  await writeStore(s);
+}
+
+async function findUserIdByStripeCustomer(customerId) {
+  if (!customerId) return null;
+  if (supabase) {
+    const { data, error } = await supabase.from('remy_users').select('id').eq('stripe_customer_id', String(customerId)).maybeSingle();
+    if (error) throw new Error(`Supabase Stripe-Kunde suchen fehlgeschlagen: ${error.message}`);
+    return data?.id || null;
+  }
+  const s = await readStore();
+  const user = Object.values(s.users).find(u => u.stripe_customer_id === customerId);
+  return user?.id || null;
+}
 
 app.listen(port, () => console.log(`Remy backend läuft auf Port ${port}`));
 
