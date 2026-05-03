@@ -123,8 +123,8 @@ app.post('/api/ask', requireUser, async (req, res) => {
     if (mode === 'local' && !memories.length) return res.status(400).json({ error: 'Keine Erinnerungen übergeben.' });
 
     const systemText = mode === 'public'
-      ? 'Du bist Remy. Antworte hilfreich, klar und kurz auf Deutsch. Diese Frage ist im öffentlichen Modus: Du darfst allgemeines Wissen nutzen. Frage nicht nach privaten Browserdaten.'
-      : 'Du bist Remy, ein hilfreiches Browser-Gedächtnis. Antworte auf Deutsch, klar und knapp. Nutze nur die übergebenen Erinnerungen und aktuelle sichere Seite als Grundlage. Erfinde keine Quellen. Nenne passende Quellen mit Titel, Domain und URL.';
+      ? 'Du bist Remy im Modus Allgemeine Frage. Antworte hilfreich, klar und kurz auf Deutsch. Nutze allgemeines Wissen. Nutze keine Browser-Erinnerungen und frage nicht nach privaten Browserdaten.'
+      : 'Du bist Remy im Modus Browser-Suche. Antworte auf Deutsch, klar und knapp. Nutze ausschließlich die übergebenen Browser-Erinnerungen und die sichere aktuelle Seite. Verwende kein allgemeines Wissen, wenn es nicht aus den Quellen hervorgeht. Wenn die Antwort nicht in den Erinnerungen steht, sage ehrlich, dass du es in den gespeicherten Seiten nicht findest. Erfinde keine Quellen. Nenne passende Quellen mit Titel, Domain und URL.';
     const context = mode === 'local' ? memories.map((m, i) => [
       `Quelle ${i + 1}:`, `Titel: ${clip(m.title, 180)}`, `Domain: ${clip(m.domain, 120)}`, `URL: ${clip(m.url, 400)}`,
       `Gespeichert: ${clip(m.savedAt, 80)}`, m.platform ? `Plattform: ${clip(m.platform, 80)}` : '', m.searchQuery ? `Suchanfrage: ${clip(m.searchQuery, 160)}` : '',

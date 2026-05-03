@@ -250,20 +250,20 @@ setInterval(() => {
   root.innerHTML = `
     <button id="remy-float-button" title="Remy öffnen"><img src="${chrome.runtime.getURL('logo.svg')}" alt="Remy"></button>
     <div id="remy-radial-menu" class="remy-radial-menu hidden" aria-label="Remy Schnellaktionen">
-      <button id="remy-radial-local" class="remy-radial-action local" title="Lokal fragen"><span>Lokal</span></button>
-      <button id="remy-radial-public" class="remy-radial-action public" title="Öffentlich fragen"><span>Öffentlich</span></button>
+      <button id="remy-radial-local" class="remy-radial-action local" title="Browser suchen"><span>Browser</span></button>
+      <button id="remy-radial-public" class="remy-radial-action public" title="Allgemein fragen"><span>Allgemein</span></button>
       <button id="remy-radial-ignore" class="remy-radial-action ignore" title="Diese Seite nie merken"><span>Nie merken</span></button>
     </div>
     <section id="remy-side-panel" class="remy-side-panel hidden" aria-label="Remy Chat">
       <header class="remy-side-header">
-        <div><img src="${chrome.runtime.getURL('logo.svg')}" alt=""><strong>Remy</strong><span id="remy-side-mode-label">Lokal</span></div>
+        <div><img src="${chrome.runtime.getURL('logo.svg')}" alt=""><strong>Remy</strong><span id="remy-side-mode-label">Browser</span></div>
         <button id="remy-side-close">×</button>
       </header>
-      <p id="remy-mode-help" class="remy-mode-help">Lokal nutzt deine gespeicherten Erinnerungen und diese sichere Seite.</p>
+      <p id="remy-mode-help" class="remy-mode-help">Browser-Suche nutzt nur deine gespeicherten Seiten und sichere aktuelle Inhalte.</p>
       <div id="remy-side-usage" class="remy-side-usage">Fragen werden geladen…</div>
       <div id="remy-side-messages" class="remy-side-messages"></div>
       <form id="remy-side-form" class="remy-side-form">
-        <textarea id="remy-side-input" rows="2" placeholder="Lokal fragen…"></textarea>
+        <textarea id="remy-side-input" rows="2" placeholder="Browser suchen…"></textarea>
         <button type="submit">↵</button>
       </form>
     </section>`;
@@ -278,24 +278,36 @@ setInterval(() => {
     .remy-side-panel{position:absolute;right:0;bottom:82px;width:min(360px,calc(100vw - 34px));max-height:min(570px,calc(100vh - 112px));background:rgba(255,255,255,.98);backdrop-filter:blur(14px);border:1px solid rgba(124,58,237,.13);border-radius:28px;box-shadow:0 28px 90px rgba(31,41,55,.26);overflow:hidden;display:flex;flex-direction:column}.remy-side-panel.hidden{display:none}.remy-side-panel.public-mode{border-color:rgba(8,145,178,.22);box-shadow:0 28px 90px rgba(8,145,178,.22)}.remy-side-panel.local-mode{border-color:rgba(124,58,237,.20)}
     .remy-side-header{display:flex;align-items:center;justify-content:space-between;padding:14px 14px 9px}.remy-side-header>div{display:flex;align-items:center;gap:9px}.remy-side-header img{width:34px;height:34px}.remy-side-header strong{font-size:16px}.remy-side-header span{font-size:11px;font-weight:900;border-radius:999px;background:#ede9fe;color:#6d28d9;padding:4px 8px}.public-mode .remy-side-header span{background:#cffafe;color:#0e7490}.remy-side-header button{border:0;background:#f3f4f6;border-radius:12px;width:30px;height:30px;cursor:pointer;font-size:18px;color:#4b5563}
     .remy-mode-help{font-size:12px;color:#6b7280;margin:0 16px 8px;line-height:1.35}.remy-side-usage{font-size:12px;font-weight:800;color:#4b5563;background:#f9fafb;border-top:1px solid #f3f4f6;border-bottom:1px solid #f3f4f6;padding:9px 16px}.public-mode .remy-side-usage{background:#ecfeff;color:#0e7490}.local-mode .remy-side-usage{background:#f5f3ff;color:#6d28d9}
-    .remy-side-messages{padding:14px;overflow:auto;display:flex;flex-direction:column;gap:10px;min-height:150px;max-height:34vh}.remy-bubble{border-radius:18px;padding:11px 12px;line-height:1.42;font-size:13px;white-space:pre-wrap}.remy-bot{background:#f3f4f6}.remy-user{background:#4f46e5;color:white;align-self:flex-end;max-width:84%}.remy-bot.public{background:#ecfeff}.remy-bot.local{background:#f5f3ff}.remy-source{font-size:12px;border:1px solid #e5e7eb;border-radius:14px;padding:8px;margin-top:7px;background:white}.remy-source a{color:#4f46e5;font-weight:800;text-decoration:none}
+    .remy-side-messages{padding:14px;overflow:auto;display:flex;flex-direction:column;gap:10px;min-height:150px;max-height:34vh}.remy-bubble{border-radius:18px;padding:11px 12px;line-height:1.42;font-size:13px;white-space:pre-wrap}.remy-bot{background:#f3f4f6}.remy-user{background:#4f46e5;color:white;align-self:flex-end;max-width:84%}.remy-bot.public{background:#ecfeff}.remy-bot.local{background:#f5f3ff}.remy-source{font-size:12px;border:1px solid #e5e7eb;border-radius:14px;padding:8px;margin-top:7px;background:white}.remy-source small{display:block;color:#6b7280;margin-top:2px}.remy-source a{display:inline-flex;margin-top:6px;color:#4f46e5;font-weight:900;text-decoration:none}
     .remy-side-form{display:flex;gap:8px;padding:12px;background:#fff;border-top:1px solid #f3f4f6}.remy-side-form textarea{flex:1;border:1px solid #e5e7eb;border-radius:18px;padding:11px;resize:none;font:inherit;font-size:13px;outline:none;max-height:90px}.remy-side-form textarea:focus{border-color:#a78bfa;box-shadow:0 0 0 4px #ede9fe}.public-mode .remy-side-form textarea:focus{border-color:#67e8f9;box-shadow:0 0 0 4px #ecfeff}.remy-side-form button{width:44px;border:0;border-radius:17px;background:#111827;color:white;font-weight:900;cursor:pointer}`;
   document.documentElement.appendChild(style);
 
   const $r = (id) => root.querySelector(`#${id}`);
   let mode = 'local';
   const histories = {
-    local: [{ who: 'bot', text: 'Lokaler Chat. Ich nutze nur deine gespeicherten Erinnerungen und sichere Seiten.' }],
-    public: [{ who: 'bot', text: 'Öffentlicher Chat. Ich nutze allgemeines KI-Wissen. Gib hier keine privaten Daten ein.' }]
+    local: [{ who: 'bot', text: 'Browser-Suche. Ich suche nur in deinen gespeicherten Seiten und sicheren aktuellen Inhalten.' }],
+    public: [{ who: 'bot', text: 'Allgemeine Frage. Ich nutze allgemeines KI-Wissen. Bitte keine privaten Daten eingeben.' }]
   };
 
-  $r('remy-float-button').addEventListener('click', () => $r('remy-radial-menu').classList.toggle('hidden'));
+  $r('remy-float-button').addEventListener('click', () => {
+    const panelOpen = !$r('remy-side-panel').classList.contains('hidden');
+    if (panelOpen) {
+      closeChat();
+      return;
+    }
+    $r('remy-radial-menu').classList.toggle('hidden');
+  });
   $r('remy-radial-local').addEventListener('click', () => openChat('local'));
   $r('remy-radial-public').addEventListener('click', () => openChat('public'));
   $r('remy-radial-ignore').addEventListener('click', ignoreCurrentSite);
-  $r('remy-side-close').addEventListener('click', () => $r('remy-side-panel').classList.add('hidden'));
+  $r('remy-side-close').addEventListener('click', closeChat);
   $r('remy-side-form').addEventListener('submit', async (event) => { event.preventDefault(); await ask(); });
   $r('remy-side-input').addEventListener('keydown', async (event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); await ask(); } });
+
+  function closeChat() {
+    $r('remy-radial-menu').classList.add('hidden');
+    $r('remy-side-panel').classList.add('hidden');
+  }
 
   function openChat(next) {
     $r('remy-radial-menu').classList.add('hidden');
@@ -306,11 +318,11 @@ setInterval(() => {
   function setMode(next, focus = false) {
     mode = next === 'public' ? 'public' : 'local';
     chrome.runtime.sendMessage({ type: 'REMY_SET_MODE', mode }, () => {});
-    $r('remy-side-mode-label').textContent = mode === 'public' ? 'Öffentlich' : 'Lokal';
+    $r('remy-side-mode-label').textContent = mode === 'public' ? 'Allgemein' : 'Browser';
     $r('remy-side-panel').classList.toggle('public-mode', mode === 'public');
     $r('remy-side-panel').classList.toggle('local-mode', mode === 'local');
-    $r('remy-mode-help').textContent = mode === 'public' ? 'Öffentlich nutzt allgemeines KI-Wissen. Stelle hier keine privaten Daten rein.' : 'Lokal nutzt deine gespeicherten Erinnerungen und diese sichere Seite.';
-    $r('remy-side-input').placeholder = mode === 'public' ? 'Öffentlich fragen…' : 'Lokal fragen…';
+    $r('remy-mode-help').textContent = mode === 'public' ? 'Allgemeine Frage nutzt KI-Wissen. Keine privaten Daten eingeben.' : 'Browser-Suche nutzt nur deine gespeicherten Seiten und sichere aktuelle Inhalte.';
+    $r('remy-side-input').placeholder = mode === 'public' ? 'Allgemein fragen…' : 'Browser suchen…';
     renderHistory();
     refreshUsage();
     if (focus) $r('remy-side-input').focus();
@@ -323,10 +335,10 @@ setInterval(() => {
       const div = document.createElement('div');
       div.className = `remy-bubble ${item.who === 'user' ? 'remy-user' : `remy-bot ${mode}`}`;
       div.textContent = item.text;
-      if (item.sources?.length) item.sources.slice(0, 3).forEach(source => {
+      if (item.sources?.length) item.sources.slice(0, 5).forEach(source => {
         const s = document.createElement('div');
         s.className = 'remy-source';
-        s.innerHTML = `<strong>${escapeHtml(source.title || source.domain || 'Quelle')}</strong><br><a href="${escapeAttr(source.url || '#')}" target="_blank" rel="noreferrer">Öffnen</a>`;
+        s.innerHTML = `<strong>${escapeHtml(source.title || source.domain || 'Quelle')}</strong><small>${escapeHtml(source.domain || '')}</small><a href="${escapeAttr(source.url || '#')}" target="_blank" rel="noreferrer">Link öffnen</a>`;
         div.appendChild(s);
       });
       box.appendChild(div);
@@ -334,12 +346,15 @@ setInterval(() => {
     box.scrollTop = box.scrollHeight;
   }
 
-  function pushMessage(who, text, sources = null) {
-    histories[mode].push({ who, text, sources });
-    renderHistory();
-    return histories[mode].length - 1;
+  function pushMessage(who, text, sources = null, targetMode = mode) {
+    histories[targetMode].push({ who, text, sources });
+    if (targetMode === mode) renderHistory();
+    return histories[targetMode].length - 1;
   }
-  function replaceBot(index, text, sources = null) { histories[mode][index] = { who: 'bot', text, sources }; renderHistory(); }
+  function replaceBot(index, text, sources = null, targetMode = mode) {
+    histories[targetMode][index] = { who: 'bot', text, sources };
+    if (targetMode === mode) renderHistory();
+  }
 
   function updateUsage(usage) {
     if (!usage) return;
@@ -361,18 +376,20 @@ setInterval(() => {
     const input = $r('remy-side-input');
     const question = input.value.trim();
     if (!question) return;
-    input.value = '';
     const activeMode = mode;
-    pushMessage('user', question);
-    const loadingIndex = pushMessage('bot', 'Remy denkt kurz…');
+    input.value = '';
+    pushMessage('user', question, null, activeMode);
+    const loadingIndex = pushMessage('bot', 'Remy denkt…', null, activeMode);
     chrome.runtime.sendMessage({ type: 'REMY_SIDEBAR_ASK', question, mode: activeMode }, (response) => {
-      if (mode !== activeMode) mode = activeMode;
-      if (!response?.ok || response.loginRequired) {
-        replaceBot(loadingIndex, response?.error || 'Bitte melde dich zuerst an.');
+      if (!response?.ok) {
+        replaceBot(loadingIndex, response?.error || 'Remy konnte gerade nicht antworten.', null, activeMode);
+        if (response?.usage) updateUsage(response.usage);
+        refreshUsage();
         return;
       }
-      replaceBot(loadingIndex, response.answer || 'Keine Antwort erhalten.', response.sources || null);
-      updateUsage(response.usage);
+      replaceBot(loadingIndex, response.answer || 'Keine Antwort erhalten.', response.sources || null, activeMode);
+      if (response.usage) updateUsage(response.usage);
+      refreshUsage();
     });
   }
 
