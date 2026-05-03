@@ -12,6 +12,7 @@
     "dotenv": "latest",
     "express": "latest",
     "openai": "latest",
-    "stripe": "latest"
+    "stripe": "latest",
+    "@supabase/supabase-js": "latest"
   }
 }

@@ -1,7 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const DEFAULT_BACKEND_URL = 'https://remy-backend-uqrf.onrender.com';
 const stopwords = new Set(['der','die','das','und','oder','aber','ich','du','er','sie','es','wir','ihr','ein','eine','einer','eines','mit','von','für','zu','im','in','auf','an','ist','sind','war','waren','was','wie','wo','wer','wenn','dass','nicht','auch','als','bei','aus','dem','den','des','zur','zum','the','and','or','to','of','in','for','with','is','are','what','how','why','a','an']);
-let state = { pages: [], settings: { autoRemember: true, hasSeenOnboarding: false }, omni_ai: { backendUrl: DEFAULT_BACKEND_URL, userId: null }, usage: null, auth: { token: null, user: null } };
+let state = { pages: [], settings: { autoRemember: true, hasSeenOnboarding: false }, omni_ai: { backendUrl: DEFAULT_BACKEND_URL, userId: null }, usage: null, auth: { token: null, user: null }, mode: 'local' };
 
 function send(message) { return new Promise(resolve => chrome.runtime.sendMessage(message, resolve)); }
 function storageGet(keys) { return new Promise(resolve => chrome.storage.local.get(keys, resolve)); }
@@ -66,7 +66,9 @@ async function fetchLivePage(question) {
 async function askMemory(question) {
   const answer = $('answer');
   const pages = state.pages || [];
-  if (!question.trim()) { answer.textContent = 'Schreib eine Frage rein — Remy sucht in deinen Erinnerungen.'; return; }
+  if (!state.auth?.token) { showLoginGate('Bitte melde dich an, damit deine Free-Fragen und Erinnerungen deinem Konto zugeordnet bleiben.'); return; }
+  if (!question.trim()) { answer.textContent = 'Schreib eine Frage rein — Remy sucht in deinen Erinnerungen oder beantwortet allgemein.'; return; }
+  if (state.mode === 'public') return askPublic(question);
   answer.innerHTML = '<span class="ai-label">Remy prüft die aktuelle Seite…</span>';
   document.querySelector('.ask-card').classList.add('loading');
   const live = await fetchLivePage(question);
@@ -105,6 +107,33 @@ async function askMemory(question) {
   } finally { document.querySelector('.ask-card').classList.remove('loading'); }
 }
 
+
+async function askPublic(question) {
+  const answer = $('answer');
+  answer.innerHTML = '<span class="ai-label">Öffentlicher Modus</span>Remy beantwortet allgemein. Dabei wird deine Frage an die KI verarbeitet, aber keine lokalen Erinnerungen mitgesendet.';
+  document.querySelector('.ask-card').classList.add('loading');
+  try {
+    const response = await fetch(`${getBackendUrl()}/api/ask-public`, {
+      method: 'POST',
+      headers: await requestHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ question, language: 'de' })
+    });
+    const data = await safeJson(response);
+    if (!response.ok) {
+      if (response.status === 402 && data?.usage) { state.usage = data.usage; await cacheUsage(data.usage); renderUsage(); }
+      throw new Error(data?.error || `Backend antwortet mit Status ${response.status}`);
+    }
+    if (data.usage) { state.usage = data.usage; await cacheUsage(data.usage); renderUsage(); }
+    answer.innerHTML = `<span class="ai-label">Remy-Antwort · Öffentlich</span>\n${linkify(escapeHtml(data.answer || 'Keine Antwort erhalten.'))}`;
+    setAiStatus(true);
+  } catch (error) {
+    answer.innerHTML = `<span class="ai-label fallback-label">Remy gerade offline</span>\n${escapeHtml(error.message || 'Die allgemeine Antwort ist gerade nicht verfügbar.')}`;
+    setAiStatus(false, 'KI gerade nicht erreichbar');
+  } finally {
+    document.querySelector('.ask-card').classList.remove('loading');
+  }
+}
+
 function compactMemory(page) { return { title: String(page.title || '').slice(0,180), url: String(page.url || '').slice(0,500), domain: String(page.domain || '').slice(0,120), savedAt: page.savedAt, searchQuery: String(page.searchQuery || '').slice(0,160), summary: String(page.summary || '').slice(0,760), text: String(page.text || '').slice(0,2600), platform: String(page.platform || '').slice(0,80), media: page.media || {}, language: page.language || {}, keywords: Array.isArray(page.keywords) ? page.keywords.slice(0,22) : [] }; }
 async function safeJson(response) { try { return await response.json(); } catch { return null; } }
 function buildLocalFallback(question, pages) {
@@ -130,7 +159,29 @@ function render() {
   $('toggleAuto').classList.toggle('off', !autoOn);
   $('autoStatus').textContent = autoOn ? 'Automatik aktiv' : 'Automatik pausiert';
   $('memoryCount').textContent = autoOn ? (pages.length ? `${pages.length} lokale Erinnerungen gespeichert. Kein Klick nötig.` : 'Öffne Webseiten — ich merke sie automatisch im Hintergrund.') : 'Remy ist pausiert. Deine alten Erinnerungen bleiben lokal.';
-  renderPrivacySettings(); renderAuth(); renderMemories(pages); renderUsage();
+  renderMode(); renderPrivacySettings(); renderAuth(); renderMemories(pages); renderUsage(); renderLoginGate();
+}
+
+
+function renderMode() {
+  document.querySelectorAll('[data-mode]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mode === state.mode);
+  });
+  const hint = $('modeHint');
+  if (hint) hint.textContent = state.mode === 'public'
+    ? 'Öffentlich: allgemeine Frage an die KI. Deine Erinnerungen werden nicht mitgesendet.'
+    : 'Lokal: Remy nutzt deine gespeicherten Erinnerungen und aktuelle sichere Seiten.';
+}
+function renderLoginGate() {
+  const gate = $('loginGate');
+  if (!gate) return;
+  gate.classList.toggle('hidden', Boolean(state.auth?.token));
+}
+function showLoginGate(message = '') {
+  openAccountTab();
+  if ($('loginGateText')) $('loginGateText').textContent = message || 'Bitte melde dich an, um Remy zu nutzen.';
+  $('loginGate')?.classList.remove('hidden');
+  $('answer').innerHTML = `<span class="ai-label fallback-label">Login nötig</span>\n${escapeHtml(message || 'Bitte melde dich an, um Remy zu nutzen.')}`;
 }
 
 function renderPrivacySettings() {
@@ -146,7 +197,7 @@ function renderMemories(pages) {
   const container = $('memories');
   if (!pages.length) { container.innerHTML = '<p class="empty">Noch leer. Öffne eine normale Webseite und warte kurz.</p>'; return; }
   container.innerHTML = pages.slice(0,8).map(page => `<article class="memory"><div class="favicon">${escapeHtml(initials(page.domain || page.title))}</div><div><div class="memory-title-row"><div class="memory-title">${escapeHtml(page.title || 'Ohne Titel')}</div><button class="delete-memory" data-id="${escapeHtml(page.id || '')}" title="Diese Erinnerung löschen">×</button></div><div class="memory-meta">${escapeHtml(page.domain || '')} · ${formatDate(page.savedAt)}${page.language?.detected && page.language.detected !== 'unknown' ? ` · ${escapeHtml(page.language.detected.toUpperCase())}` : ''}</div><div class="memory-summary">${escapeHtml(page.searchQuery ? `Suche: ${page.searchQuery}. ${page.summary || ''}` : page.summary || '')}</div><button class="open-memory" data-url="${escapeHtml(page.url || '')}">Link öffnen</button></div></article>`).join('');
-  container.querySelectorAll('.delete-memory').forEach(button => button.addEventListener('click', async () => { const id = button.dataset.id; if (!id) return; const response = await send({ type: 'OMNI_DELETE_PAGE', id }); if (response?.ok) { state.pages = response.pages || state.pages.filter(page => page.id !== id); render(); } }));
+  container.querySelectorAll('.delete-memory').forEach(button => button.addEventListener('click', async () => { const id = button.dataset.id; if (!id) return; const response = await send({ type: 'OMNI_DELETE_PAGE', id }); if (response?.ok) { const deleted = state.pages.find(page => page.id === id); state.pages = response.pages || state.pages.filter(page => page.id !== id); if (deleted?.url && state.auth?.token) { try { await fetch(`${getBackendUrl()}/api/memories`, { method: 'DELETE', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ url: deleted.url }) }); } catch {} } render(); } }));
   container.querySelectorAll('.open-memory').forEach(button => button.addEventListener('click', () => { const url = button.dataset.url; if (url) chrome.tabs.create({ url }); }));
 }
 
@@ -160,9 +211,10 @@ function renderAuth() {
   $('accountStatus').textContent = user ? 'Du bist angemeldet. Remy kann Limits und Plus deinem Konto zuordnen.' : 'Melde dich an, damit Remy deine Fragen deinem Konto zuordnen kann.';
   if (user) {
     $('accountEmail').textContent = user.email || '';
-    $('accountPlan').textContent = (user.plan === 'plus') ? 'Remy Plus' : 'Remy Free';
+    $('accountPlan').textContent = user.plan === 'lifetime' ? 'Remy Lifetime' : ((user.plan === 'plus') ? 'Remy Plus' : 'Remy Free');
   }
   $('logoutBtn')?.classList.toggle('hidden', !user);
+  $('deleteAccountBtn')?.classList.toggle('hidden', !user);
 
   const footerLogin = $('footerLoginBtn');
   const footerLogout = $('footerLogoutBtn');
@@ -174,9 +226,63 @@ function renderAuth() {
     footerLogout.classList.toggle('hidden', !user);
     footerAccount.classList.toggle('logged-in', Boolean(user));
     if (footerEmail) footerEmail.textContent = user ? user.email : 'Nicht angemeldet';
-    if (footerPlan) footerPlan.textContent = user ? ((user.plan === 'plus') ? 'Remy Plus' : 'Remy Free') : 'Login für Plus & Limits';
+    if (footerPlan) footerPlan.textContent = user ? (user.plan === 'lifetime' ? 'Remy Lifetime' : ((user.plan === 'plus') ? 'Remy Plus' : 'Remy Free')) : 'Login für Plus & Limits';
   }
 }
+
+async function startExternalLogin() {
+  const hint = $('authHint');
+  if (hint) hint.textContent = 'Externe Login-Seite wird geöffnet…';
+  try {
+    const res = await fetch(`${getBackendUrl()}/api/auth/device/start`, { method: 'POST' });
+    const data = await safeJson(res);
+    if (!res.ok || !data?.url || !data?.code) throw new Error(data?.error || 'Externer Login konnte nicht gestartet werden.');
+    chrome.tabs.create({ url: data.url });
+    pollExternalLogin(data.code);
+  } catch (error) {
+    if (hint) hint.textContent = error.message || 'Externer Login konnte nicht gestartet werden.';
+  }
+}
+async function pollExternalLogin(code) {
+  const hint = $('authHint');
+  const started = Date.now();
+  const timer = setInterval(async () => {
+    if (Date.now() - started > 1000 * 60 * 12) { clearInterval(timer); if (hint) hint.textContent = 'Login-Link ist abgelaufen. Bitte erneut versuchen.'; return; }
+    try {
+      const res = await fetch(`${getBackendUrl()}/api/auth/device/poll/${encodeURIComponent(code)}`);
+      const data = await safeJson(res);
+      if (data?.pending) { if (hint) hint.textContent = 'Warte auf Login im Browser…'; return; }
+      if (res.ok && data?.token && data?.user) {
+        clearInterval(timer);
+        await saveAuth({ token: data.token, user: data.user });
+        if (hint) hint.textContent = 'Angemeldet.';
+        await syncLocalMemoriesToServer();
+        await fetchRemoteMemories();
+        await refreshUsage();
+        render();
+      }
+    } catch {}
+  }, 1800);
+}
+async function syncLocalMemoriesToServer() {
+  if (!state.auth?.token) return;
+  const pages = state.pages || [];
+  for (const page of pages.slice(0, 100)) {
+    try { await fetch(`${getBackendUrl()}/api/memories`, { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ memory: compactMemory(page) }) }); } catch {}
+  }
+}
+async function fetchRemoteMemories() {
+  if (!state.auth?.token) return;
+  try {
+    const res = await fetch(`${getBackendUrl()}/api/memories`, { headers: authHeaders() });
+    const data = await safeJson(res);
+    if (!res.ok || !Array.isArray(data?.memories)) return;
+    const byUrl = new Map([...(state.pages || []), ...data.memories].map(p => [p.url, p]));
+    state.pages = Array.from(byUrl.values()).sort((a,b)=>new Date(b.savedAt)-new Date(a.savedAt)).slice(0,600);
+    await storageSet({ omni_pages: state.pages });
+  } catch {}
+}
+
 async function submitAuth(mode) {
   const email = $('authEmail')?.value?.trim();
   const password = $('authPassword')?.value || '';
@@ -192,6 +298,8 @@ async function submitAuth(mode) {
     await saveAuth({ token: data.token, user: data.user });
     $('authPassword').value = '';
     $('authHint').textContent = 'Angemeldet.';
+    await syncLocalMemoriesToServer();
+    await fetchRemoteMemories();
     await refreshUsage();
     render();
   } catch (error) {
@@ -203,6 +311,21 @@ async function logout() {
   await refreshUsage();
   render();
 }
+async function deleteAccount() {
+  if (!state.auth?.token) return;
+  if (!confirm('Du bist dabei, dein Remy-Konto zu löschen.\n\nDadurch werden dein Konto, deine Limits und deine gespeicherten Remy-Daten dauerhaft entfernt. Wenn du Remy Plus nutzt, kündige bitte zuerst dein Abo über „Abo verwalten“.\n\nMöchtest du wirklich fortfahren?')) return;
+  try {
+    const res = await fetch(`${getBackendUrl()}/api/auth/delete-account`, { method: 'DELETE', headers: authHeaders() });
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error(data?.error || 'Konto konnte nicht gelöscht werden.');
+    await saveAuth({ token: null, user: null });
+    await refreshUsage();
+    $('answer').innerHTML = '<span class="ai-label">Konto gelöscht</span>\nDein Remy-Konto wurde gelöscht.';
+    render();
+  } catch (error) {
+    $('authHint').textContent = error.message || 'Konto konnte nicht gelöscht werden.';
+  }
+}
 async function refreshMe() {
   if (!state.auth?.token) return;
   try {
@@ -210,33 +333,37 @@ async function refreshMe() {
     if (!res.ok) throw new Error('not logged in');
     const data = await res.json();
     await saveAuth({ token: state.auth.token, user: data.user });
+    await fetchRemoteMemories();
   } catch {
     await saveAuth({ token: null, user: null });
   }
 }
 
 function renderUsage() {
-  const usage = state.usage || { plan: 'free', used: 0, limit: 10, remaining: 10, plusPrice: '3,99 € / Monat' };
-  const isPlus = usage.plan === 'plus';
+  const usage = state.usage || { plan: state.auth?.user?.plan || 'free', used: 0, limit: 10, remaining: 10, plusPrice: '3,99 € / Monat', lifetimePrice: '79 € einmalig' };
+  const plan = usage.plan || state.auth?.user?.plan || 'free';
+  const isPaid = plan === 'plus' || plan === 'lifetime';
   const upgradeBtn = $('upgradeBtn');
+  const lifetimeBtn = $('lifetimeBtn');
   const manageBtn = $('manageBillingBtn');
-  $('planName').textContent = isPlus ? 'Remy Plus' : 'Remy Free';
-  if (isPlus) {
-    const used = Number(usage.used || 0), limit = Number(usage.limit || 100), remaining = Math.max(0, Number(usage.remaining ?? (limit - used)));
-    $('usageText').textContent = `Plus aktiv · ${remaining} von ${limit} Fragen diesen Monat übrig.`;
-    $('usageBar').style.width = `${Math.min(100, Math.round((used / limit) * 100))}%`;
-    upgradeBtn.textContent = 'Plus aktiv';
+  $('planName').textContent = plan === 'lifetime' ? 'Remy Lifetime' : (plan === 'plus' ? 'Remy Plus' : 'Remy Free');
+  const used = Number(usage.used || 0), limit = Number(usage.limit || (plan === 'lifetime' ? 200 : (plan === 'plus' ? 100 : 10))), remaining = Math.max(0, Number(usage.remaining ?? (limit - used)));
+  $('usageBar').style.width = `${Math.min(100, Math.round((used / limit) * 100))}%`;
+  if (isPaid) {
+    $('usageText').textContent = `${plan === 'lifetime' ? 'Lifetime aktiv' : 'Plus aktiv'} · ${remaining} von ${limit} Fragen diesen Monat übrig.`;
+    upgradeBtn.textContent = plan === 'lifetime' ? 'Lifetime aktiv' : 'Plus aktiv';
     upgradeBtn.disabled = true;
     upgradeBtn.classList.add('is-plus');
-    manageBtn?.classList.remove('hidden');
+    lifetimeBtn?.classList.add('hidden');
+    if (plan === 'plus') manageBtn?.classList.remove('hidden'); else manageBtn?.classList.add('hidden');
     return;
   }
-  const used = Number(usage.used || 0), limit = Number(usage.limit || 10), remaining = Math.max(0, Number(usage.remaining ?? (limit - used)));
   $('usageText').textContent = `${remaining} von ${limit} kostenlosen Fragen übrig · Plus ${usage.plusPrice || '3,99 € / Monat'}`;
-  $('usageBar').style.width = `${Math.min(100, Math.round((used / limit) * 100))}%`;
-  upgradeBtn.textContent = 'Upgrade';
+  upgradeBtn.textContent = 'Plus';
   upgradeBtn.disabled = false;
   upgradeBtn.classList.remove('is-plus');
+  lifetimeBtn?.classList.remove('hidden');
+  lifetimeBtn.textContent = `Lifetime ${usage.lifetimePrice || '79 €'}`;
   manageBtn?.classList.add('hidden');
 }
 async function openUpgrade() {
@@ -259,6 +386,24 @@ async function openUpgrade() {
   } catch (error) {
     const price = state.usage?.plusPrice || '3,99 € / Monat';
     $('answer').innerHTML = `<span class="ai-label fallback-label">Upgrade gerade nicht verfügbar</span>\n${escapeHtml(error.message || `Plus kostet ${price} für 100 Fragen pro Monat und mehr Komfort.`)}`;
+  }
+}
+
+
+async function openLifetime() {
+  if (!state.auth?.token) { showLoginGate('Bitte melde dich an, damit Remy Lifetime deinem Konto zugeordnet werden kann.'); return; }
+  try {
+    const res = await fetch(`${getBackendUrl()}/api/create-lifetime-checkout-session`, {
+      method: 'POST',
+      headers: await requestHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ earlyBird: true })
+    });
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error(data?.error || 'Lifetime-Checkout gerade nicht verfügbar.');
+    if (!data?.url) throw new Error('Checkout-Link fehlt.');
+    chrome.tabs.create({ url: data.url });
+  } catch (error) {
+    $('answer').innerHTML = `<span class="ai-label fallback-label">Lifetime gerade nicht verfügbar</span>\n${escapeHtml(error.message || 'Lifetime kann gerade nicht geöffnet werden.')}`;
   }
 }
 
@@ -294,7 +439,7 @@ async function refreshState() {
     render();
   }
 }
-async function refreshUsage() { try { const res = await fetch(`${getBackendUrl()}/api/usage`, { headers: await requestHeaders() }); if (!res.ok) throw new Error('usage unavailable'); const payload = await res.json(); state.usage = payload.usage; await cacheUsage(state.usage); } catch { state.usage = await getCachedUsage() || { plan: 'free', used: 0, limit: 10, remaining: 10, plusPrice: '3,99 € / Monat' }; } renderUsage(); }
+async function refreshUsage() { if (!state.auth?.token) { state.usage = { plan: 'free', used: 0, limit: 10, remaining: 10, plusPrice: '3,99 € / Monat', lifetimePrice: '79 € einmalig' }; renderUsage(); return; } try { const res = await fetch(`${getBackendUrl()}/api/usage`, { headers: await requestHeaders() }); if (!res.ok) throw new Error('usage unavailable'); const payload = await res.json(); state.usage = payload.usage; if (payload.user) await saveAuth({ token: state.auth.token, user: payload.user }); await cacheUsage(state.usage); } catch { state.usage = await getCachedUsage() || { plan: 'free', used: 0, limit: 10, remaining: 10, plusPrice: '3,99 € / Monat', lifetimePrice: '79 € einmalig' }; } renderUsage(); }
 async function checkBackend() { try { const res = await fetch(`${getBackendUrl()}/health`, { method: 'GET' }); if (!res.ok) throw new Error('not ok'); const data = await res.json(); setAiStatus(Boolean(data?.ok && data?.hasKey), data?.hasKey ? 'KI bereit' : 'KI später erneut'); } catch { setAiStatus(false, 'KI gerade nicht erreichbar'); } }
 function setAiStatus(ok, text) { const el = $('aiStatus'); el.classList.toggle('ok', ok); el.classList.toggle('off', !ok); el.textContent = text || (ok ? 'KI bereit' : 'KI gerade nicht erreichbar'); }
 function initials(text) { const clean = String(text || '?').replace(/^www\./, '').trim(); return clean ? clean[0].toUpperCase() : '?'; }
@@ -313,19 +458,25 @@ function openAccountTab() {
 }
 
 async function init() {
+  const modeStore = await storageGet(['remy_mode']); state.mode = modeStore.remy_mode || 'local';
   await refreshState(); await refreshMe(); await checkBackend(); await refreshUsage();
   $('startOnboarding').addEventListener('click', async () => { let response = await send({ type: 'OMNI_SET_AUTO', value: true }); if (response?.ok) state.settings = response.settings; response = await send({ type: 'OMNI_SET_ONBOARDING_SEEN', value: true }); if (response?.ok) state.settings = response.settings; render(); });
   $('pauseOnboarding').addEventListener('click', async () => { let response = await send({ type: 'OMNI_SET_AUTO', value: false }); if (response?.ok) state.settings = response.settings; response = await send({ type: 'OMNI_SET_ONBOARDING_SEEN', value: true }); if (response?.ok) state.settings = response.settings; render(); });
   $('toggleAuto').addEventListener('click', async () => { const next = !(state.settings?.autoRemember !== false); const response = await send({ type: 'OMNI_SET_AUTO', value: next }); if (response?.ok) { state.settings = response.settings; render(); } });
   $('ask').addEventListener('click', () => askMemory($('question').value));
   $('upgradeBtn').addEventListener('click', openUpgrade);
+  $('lifetimeBtn')?.addEventListener('click', openLifetime);
+  document.querySelectorAll('[data-mode]').forEach(btn => btn.addEventListener('click', async () => { state.mode = btn.dataset.mode || 'local'; await storageSet({ remy_mode: state.mode }); renderMode(); }));
   $('manageBillingBtn')?.addEventListener('click', openBillingPortal);
-  $('onboardingLoginBtn')?.addEventListener('click', openAccountTab);
-  $('footerLoginBtn')?.addEventListener('click', openAccountTab);
+  $('onboardingLoginBtn')?.addEventListener('click', startExternalLogin);
+  $('externalLoginBtn')?.addEventListener('click', startExternalLogin);
+  $('loginGateBtn')?.addEventListener('click', startExternalLogin);
+  $('footerLoginBtn')?.addEventListener('click', startExternalLogin);
   $('loginBtn')?.addEventListener('click', () => submitAuth('login'));
   $('registerBtn')?.addEventListener('click', () => submitAuth('register'));
   $('logoutBtn')?.addEventListener('click', logout);
   $('footerLogoutBtn')?.addEventListener('click', logout);
+  $('deleteAccountBtn')?.addEventListener('click', deleteAccount);
   $('question').addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); askMemory($('question').value); } });
   document.querySelectorAll('.chip').forEach(chip => chip.addEventListener('click', () => { $('question').value = chip.dataset.question || ''; askMemory($('question').value); }));
   $('toggleSettings').addEventListener('click', () => $('settingsPanel').classList.toggle('hidden'));

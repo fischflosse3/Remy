@@ -1,27 +1,41 @@
 # Remy Backend
 
-## Start
+## Setup
 
 ```bash
 npm install
 npm start
 ```
 
-Lege vorher eine `.env` Datei an:
+## Supabase
 
-```env
-OPENAI_API_KEY=dein_api_key_hier
-OPENAI_MODEL=gpt-4.1-mini
-PORT=8787
-FREE_MONTHLY_QUESTIONS=10
-PLUS_PRICE=3,99 € / Monat
-```
+Führe `backend/supabase/schema.sql` im Supabase SQL Editor aus.
 
-## Free-Limit
+Danach in Render eintragen:
 
-Das Backend zählt aktuell pro anonymer Extension-ID 10 kostenlose KI-Fragen pro Monat. Die Nutzung wird lokal in `usage.json` gespeichert.
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
 
-Für ein echtes öffentliches Produkt ersetzt du das später durch Login + Datenbank + Stripe/Paddle/Lemon Squeezy. Diese Version zeigt schon die korrekte Produktlogik, aber noch keine echte Zahlungsabwicklung.
+## Stripe
 
+Für Plus:
 
-Nutzungslimits werden dauerhaft in `backend/data/usage.json` gespeichert. Browser- oder Laptop-Neustarts setzen die 10 Free-Fragen nicht zurück; nur der neue Monat startet wieder mit 10 Fragen.
+- `STRIPE_PRICE_ID`
+
+Für Lifetime:
+
+- `STRIPE_LIFETIME_EARLY_BIRD_PRICE_ID`
+- `STRIPE_LIFETIME_PRICE_ID`
+
+Für Webhooks:
+
+- Endpoint: `/api/stripe/webhook`
+- `STRIPE_WEBHOOK_SECRET`
+
+Für Kund*innenportal:
+
+- Stripe Customer Portal in Stripe aktivieren.
+
+## Externer Login
+
+Die Extension ruft `/api/auth/device/start` auf. Das Backend öffnet dann `/login?code=...` im Browser. Nach erfolgreichem Login holt die Extension Token und Nutzerprofil über `/api/auth/device/poll/:code` ab.

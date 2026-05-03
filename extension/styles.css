@@ -246,3 +246,46 @@ body { background: linear-gradient(180deg, #fbfdff 0%, var(--bg) 100%); }
 .upgrade-btn.is-plus { cursor: default; opacity: .9; background: linear-gradient(135deg, #21b573, #78d69c); box-shadow: none; }
 .upgrade-btn:disabled { pointer-events: none; }
 #manageBillingBtn { white-space: nowrap; }
+
+/* Simpler pre-launch polish */
+.app { padding-bottom: 14px; }
+.onboarding-card ul { display: none; }
+.compact-login-note { margin: 12px 0; padding: 11px 12px; border: 1px solid var(--line); border-radius: 16px; background: #f7fbff; }
+.compact-login-note strong { display:block; color: var(--blue-dark); margin-bottom: 3px; }
+.compact-login-note p { margin: 0 0 8px; }
+.usage-card, .ask-card, .settings-card, .account-footer-card, .memories-card { border-radius: 22px; }
+.billing-actions { display:flex; flex-direction:column; align-items:flex-end; gap: 6px; }
+.upgrade-btn.is-plus { cursor: default; opacity: .95; background: linear-gradient(135deg, #12a889, #7dd6c9); }
+.account-footer-card { display:flex; align-items:center; justify-content:space-between; gap:10px; padding: 12px 14px; background: rgba(255,255,255,.76); border:1px solid var(--line); border-radius:20px; margin-bottom:12px; }
+.account-footer-card strong { display:block; max-width:190px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12.5px; color:var(--blue-dark); }
+.account-footer-card p { margin:2px 0 0; font-size:11px; color:var(--muted); }
+.account-box { display:grid; gap:6px; margin-top:8px; padding:10px; border:1px solid var(--line); border-radius:16px; background:#f8fcff; }
+.account-box strong { color:var(--blue-dark); }
+.account-box span { color:var(--muted); font-size:12px; }
+.danger-outline { margin-top: 4px; border: 1px solid rgba(228,93,106,.35); border-radius: 14px; padding: 9px 10px; color: var(--danger); background: rgba(228,93,106,.06); font-weight: 850; cursor: pointer; }
+.settings-block p, .trust-list p { color:#50657a; }
+.chips { margin-top: 8px; }
+.hero-card.remy-hero { margin-bottom: 12px; }
+
+/* Remy simplification + login/mode glow-up */
+.login-gate, .mode-card {
+  background: rgba(255,255,255,.84);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 13px 14px;
+  margin-bottom: 12px;
+  box-shadow: 0 12px 28px rgba(32,58,87,.06);
+}
+.login-gate strong { display:block; color: var(--blue-dark); font-size: 14px; margin-bottom: 4px; }
+.login-gate p, .mode-card p { margin: 0 0 10px; color:#52677d; font-size: 12px; line-height: 1.42; }
+.mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 8px; }
+.mode-btn { border:0; border-radius: 999px; padding: 9px 10px; cursor:pointer; font-weight:900; color:var(--blue-dark); background:#eaf3fb; }
+.mode-btn.active { color:#fff; background:linear-gradient(135deg,var(--blue),var(--teal)); box-shadow:0 10px 22px rgba(45,124,246,.16); }
+.billing-actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+.billing-actions button { white-space:nowrap; }
+.lifetime-btn { margin-top:0; padding:8px 10px; border-radius:999px; font-size:11px; }
+.usage-card, .ask-card, .settings-card, .memories-card, .account-footer-card { box-shadow: 0 10px 28px rgba(32,58,87,.045); }
+.settings-tabs { grid-template-columns: 1fr 1fr 1fr; }
+.auth-actions { display:grid; grid-template-columns:1fr; }
+.auth-actions button { min-width:0; }
+.danger-outline { border:1px solid rgba(228,93,106,.24); background:rgba(228,93,106,.08); color:#8b5260; border-radius:14px; padding:9px 10px; font-weight:850; cursor:pointer; }

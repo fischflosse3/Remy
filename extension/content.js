@@ -238,3 +238,30 @@ setInterval(() => {
     setTimeout(() => autoRemember('spa_late_dynamic_content'), 12000);
   }
 }, 1000);
+
+// Small side assistant. It does not read sensitive content; it only lets the user choose a mode quickly.
+(function initRemySideBubble(){
+  if (window.__remySideBubble || !/^https?:/.test(location.href)) return;
+  window.__remySideBubble = true;
+  const host = document.createElement('div');
+  host.id = 'remy-side-bubble-root';
+  host.innerHTML = `
+    <style>
+      #remy-side-bubble-root{position:fixed;right:18px;top:42%;z-index:2147483647;font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;color:#203a57}
+      .remy-bubble{width:46px;height:46px;border:0;border-radius:18px;background:linear-gradient(135deg,#3e78d6,#7dd6c9);box-shadow:0 14px 34px rgba(32,58,87,.24);color:white;font-weight:900;cursor:pointer}
+      .remy-panel{position:absolute;right:0;top:54px;width:218px;background:rgba(255,255,255,.96);border:1px solid #dbeafe;border-radius:20px;box-shadow:0 22px 64px rgba(32,58,87,.20);padding:12px;display:none}
+      .remy-panel.open{display:block}.remy-panel strong{font-size:13px}.remy-panel p{margin:5px 0 10px;font-size:11.5px;line-height:1.35;color:#52677d}.remy-panel button{width:100%;border:0;border-radius:14px;padding:10px;margin-top:7px;font-weight:850;cursor:pointer}.remy-local{background:#eef7ff;color:#203a57}.remy-public{background:linear-gradient(135deg,#3e78d6,#7dd6c9);color:white}.remy-note{font-size:10.5px;color:#6b7c8f;margin-top:7px;line-height:1.3}
+    </style>
+    <button class="remy-bubble" title="Remy öffnen">R</button>
+    <div class="remy-panel"><strong>Remy fragen</strong><p>Wähle, ob Remy deine Erinnerungen nutzt oder allgemein antwortet.</p><button class="remy-local">Lokal fragen</button><button class="remy-public">Öffentlich fragen</button><div class="remy-note">Du kannst den Modus später jederzeit ändern.</div></div>`;
+  document.documentElement.appendChild(host);
+  const panel = host.querySelector('.remy-panel');
+  host.querySelector('.remy-bubble').addEventListener('click', () => panel.classList.toggle('open'));
+  async function choose(mode){
+    try { await chrome.storage.local.set({ remy_mode: mode }); } catch {}
+    try { chrome.runtime.sendMessage({ type:'OMNI_OPEN_POPUP' }, () => {}); } catch {}
+    panel.classList.remove('open');
+  }
+  host.querySelector('.remy-local').addEventListener('click', () => choose('local'));
+  host.querySelector('.remy-public').addEventListener('click', () => choose('public'));
+})();

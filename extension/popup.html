@@ -11,20 +11,15 @@
     <section id="onboarding" class="onboarding-card hidden">
       <div class="onboarding-logo"><img src="logo.svg" alt="" /></div>
       <h1>Willkommen bei Remy.</h1>
-      <p>Remy merkt sich hilfreiche Webseiten lokal im Browser, damit du sie später wiederfindest.</p>
+      <p>Remy merkt sich hilfreiche Webseiten, damit du sie später wiederfindest. Dein Konto verbindet Free-Fragen, Plus und Erinnerungen dauerhaft.</p>
       <div class="onboarding-privacy">
-        <strong>Du bestimmst, was Remy nicht merken darf.</strong>
-        <p>Banking, Zahlungen, E-Mail, Dating, erwachsene Inhalte, Medizin und Login-Seiten sind standardmäßig geschützt. Du kannst diese Regeln später jederzeit in den Einstellungen ändern.</p>
+        <strong>Du hast Kontrolle.</strong>
+        <p>Sensible Kategorien wie Banking, Zahlungen, E-Mail, Dating, Medizin, erwachsene Inhalte und Login-Seiten sind geschützt. Du kannst alles später in den Einstellungen ändern.</p>
       </div>
-      <ul>
-        <li>Du kannst Remy jederzeit pausieren.</li>
-        <li>Eigene Websites kannst du auf die Ignorierliste setzen.</li>
-        <li>Bei KI-Fragen werden nur relevante Ausschnitte verarbeitet.</li>
-      </ul>
-      <div class="onboarding-login">
-        <strong>Schon ein Konto?</strong>
-        <p>Du kannst dich direkt anmelden. Du kannst Remy aber auch erst ohne Login testen.</p>
-        <button id="onboardingLoginBtn" class="secondary-btn muted-btn">Einloggen oder Konto erstellen</button>
+      <div class="onboarding-login compact-login-note">
+        <strong>Konto empfohlen</strong>
+        <p>Bitte melde dich an, damit die 10 Free-Fragen nicht an eine Installation gebunden sind und Remy dich nach Neuinstallation wiedererkennt.</p>
+        <button id="onboardingLoginBtn" class="secondary-btn muted-btn">Im Browser anmelden</button>
       </div>
       <div class="onboarding-actions">
         <button id="startOnboarding" class="primary-btn">Automatisch merken aktivieren</button>
@@ -43,6 +38,12 @@
       <button id="toggleAuto" class="switch" title="Remy ein-/ausschalten"><span></span></button>
     </header>
 
+    <section id="loginGate" class="login-gate hidden">
+      <strong>Anmeldung nötig</strong>
+      <p id="loginGateText">Melde dich an, damit Remy Free-Fragen, Plus und Erinnerungen deinem Konto zuordnet.</p>
+      <button id="loginGateBtn" class="primary-btn">Im Browser anmelden</button>
+    </section>
+
     <section class="hero-card remy-hero">
       <div class="mascot-mini" aria-hidden="true"><img src="logo.svg" alt="" /></div>
       <div class="status-row">
@@ -59,9 +60,17 @@
           <strong id="planName">Remy Free</strong>
           <p id="usageText">10 kostenlose Fragen pro Monat.</p>
         </div>
-        <div class="billing-actions"><button id="upgradeBtn" class="upgrade-btn">Upgrade</button><button id="manageBillingBtn" class="secondary-btn muted-btn hidden">Abo verwalten</button></div>
+        <div class="billing-actions"><button id="upgradeBtn" class="upgrade-btn">Plus</button><button id="lifetimeBtn" class="secondary-btn lifetime-btn">Lifetime</button><button id="manageBillingBtn" class="secondary-btn muted-btn hidden">Abo verwalten</button></div>
       </div>
       <div class="usage-bar"><span id="usageBar"></span></div>
+    </section>
+
+    <section class="mode-card">
+      <div class="mode-switch">
+        <button class="mode-btn active" data-mode="local">Lokal fragen</button>
+        <button class="mode-btn" data-mode="public">Öffentlich fragen</button>
+      </div>
+      <p id="modeHint">Lokal: Remy nutzt deine gespeicherten Erinnerungen und aktuelle sichere Seiten.</p>
     </section>
 
     <section class="ask-card">
@@ -114,7 +123,8 @@
               <input id="authEmail" type="email" autocomplete="email" placeholder="E-Mail" />
               <input id="authPassword" type="password" autocomplete="current-password" placeholder="Passwort, min. 8 Zeichen" />
               <div class="auth-actions">
-                <button id="loginBtn" class="primary-btn">Einloggen</button>
+                <button id="externalLoginBtn" class="primary-btn">Im Browser anmelden</button>
+                <button id="loginBtn" class="secondary-btn muted-btn">Hier einloggen</button>
                 <button id="registerBtn" class="secondary-btn muted-btn">Konto erstellen</button>
               </div>
               <small id="authHint">Deine gespeicherten Browser-Erinnerungen bleiben lokal. Das Konto wird für Limits und Plus gebraucht.</small>
@@ -123,6 +133,7 @@
               <strong id="accountEmail"></strong>
               <span id="accountPlan"></span>
               <button id="logoutBtn" class="secondary-btn muted-btn hidden">Abmelden</button>
+              <button id="deleteAccountBtn" class="danger-outline hidden">Konto löschen</button>
             </div>
           </div>
         </div>
@@ -133,8 +144,12 @@
             <p>Titel, Link, sichtbare Textausschnitte, Zeitpunkt und grobe Seitensprache.</p>
             <h3>Was Remy nicht speichern soll</h3>
             <p>Passwörter, Zahlungsdaten, Banking, Logins, gesperrte Websites und geschützte Kategorien.</p>
-            <h3>Wenn du eine KI-Frage stellst</h3>
-            <p>Nur passende Ausschnitte aus deinen lokalen Erinnerungen werden zur Antwort verarbeitet.</p>
+            <h3>Wenn du lokal fragst</h3>
+            <p>Nur passende Ausschnitte aus deinen Erinnerungen werden zur Antwort verarbeitet.</p>
+            <h3>Wenn du öffentlich fragst</h3>
+            <p>Remy beantwortet allgemeine Fragen. Deine lokalen Erinnerungen werden dabei nicht mitgesendet.</p>
+            <h3>Zahlung & E-Mails</h3>
+            <p>Stripe kann Kaufbestätigungen, Rechnungs-E-Mails, Zahlungsfehler und Verlängerungshinweise senden.</p>
           </div>
         </div>
       </div>
@@ -149,13 +164,6 @@
       <button id="footerLogoutBtn" class="secondary-btn muted-btn hidden">Abmelden</button>
     </section>
 
-    <section class="nudge-card" id="nudgeCard">
-      <div class="nudge-icon"><img src="logo.svg" alt="" /></div>
-      <div>
-        <strong>Schon wieder vergessen?</strong>
-        <p>Frag Remy. Ich zeige dir Antwort und passende Links.</p>
-      </div>
-    </section>
 
     <section class="memories-card">
       <div class="section-head">

@@ -18,6 +18,8 @@ const REMY_DEFAULTS = {
   omni_stats: { rememberedTotal: 0, lastNudgeAt: 0 }
 };
 
+const DEFAULT_BACKEND_URL = 'https://remy-backend-uqrf.onrender.com';
+
 const STOPWORDS = new Set(['der','die','das','und','oder','aber','ich','du','er','sie','es','wir','ihr','ein','eine','einer','eines','mit','von','für','zu','im','in','auf','an','ist','sind','war','waren','was','wie','wo','wer','wenn','dass','nicht','auch','als','bei','aus','dem','den','des','zur','zum','the','and','or','to','of','in','for','with','is','are','what','how','why','a','an']);
 
 const CATEGORY_RULES = {
@@ -71,6 +73,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'OMNI_REMOVE_IGNORED_DOMAIN') { removeIgnoredDomain(message.domain).then(sendResponse); return true; }
   if (message?.type === 'OMNI_BLOCK_CURRENT_SITE') { blockCurrentSite().then(sendResponse); return true; }
   if (message?.type === 'OMNI_DELETE_PAGE') { deletePage(message.id).then(sendResponse); return true; }
+  if (message?.type === 'OMNI_OPEN_POPUP') {
+    chrome.action.openPopup?.().then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
   if (message?.type === 'OMNI_CLEAR_ALL') {
     storageSet({ omni_pages: [], omni_stats: { rememberedTotal: 0, lastNudgeAt: 0 } }).then(async () => { await updateBadge(); sendResponse({ ok: true }); });
     return true;
@@ -107,7 +113,7 @@ async function addIgnoredDomain(domain) { const clean = cleanDomain(domain); if 
 async function removeIgnoredDomain(domain) { const clean = cleanDomain(domain); const data = await storageGet(['omni_settings']); const settings = mergeSettings(data.omni_settings); settings.ignoredDomains = (settings.ignoredDomains || []).filter(d => d !== clean); await storageSet({ omni_settings: settings }); return { ok: true, settings }; }
 async function setCategory(category, value) { if (!Object.prototype.hasOwnProperty.call(CATEGORY_RULES, category)) return { ok: false, error: 'Unbekannte Kategorie.' }; const data = await storageGet(['omni_settings']); const settings = mergeSettings(data.omni_settings); settings.blockedCategories[category] = value; await storageSet({ omni_settings: settings }); return { ok: true, settings }; }
 async function setOnboardingSeen(value) { const data = await storageGet(['omni_settings']); const settings = mergeSettings(data.omni_settings); settings.hasSeenOnboarding = value; await storageSet({ omni_settings: settings }); return { ok: true, settings }; }
-async function deletePage(id) { const data = await storageGet(['omni_pages']); const updated = (data.omni_pages || []).filter(page => page.id !== id); await storageSet({ omni_pages: updated }); await updateBadge(updated.length); return { ok: true, pages: updated }; }
+async function deletePage(id) { const data = await storageGet(['omni_pages']); const deleted = (data.omni_pages || []).find(page => page.id === id); const updated = (data.omni_pages || []).filter(page => page.id !== id); await storageSet({ omni_pages: updated }); await updateBadge(updated.length); if (deleted?.url) deleteRemoteMemory(deleted.url).catch(() => {}); return { ok: true, pages: updated }; }
 
 async function rememberPage(rawPage, tab) {
   const { omni_settings } = await storageGet(['omni_settings']);
@@ -130,6 +136,7 @@ async function saveCleanPage(page, options = {}) {
   const nextStats = { ...omni_stats, rememberedTotal };
   await storageSet({ omni_pages: updated, omni_stats: nextStats });
   await updateBadge(updated.length);
+  syncMemoryToAccount(page).catch(() => {});
   if (!existing && options.nudge) maybeNudge(rememberedTotal, page, nextStats).catch(() => {});
   return { saved: true, count: updated.length, page };
 }
@@ -194,5 +201,33 @@ function mergeSettings(settings) { return { ...REMY_DEFAULTS.omni_settings, ...(
 function normalizeUrl(url) { try { const u = new URL(url); u.hash = ''; ['utm_source','utm_medium','utm_campaign','utm_term','utm_content','fbclid','gclid'].forEach(k => u.searchParams.delete(k)); return u.toString(); } catch { return String(url || ''); } }
 function safeDomain(url) { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } }
 function cleanDomain(domain) { return String(domain || '').toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].trim(); }
+
+async function syncMemoryToAccount(page) {
+  const data = await storageGet(['remy_auth','omni_ai']);
+  const token = data.remy_auth?.token;
+  if (!token) return;
+  const backendUrl = cleanBackendUrl(data.omni_ai?.backendUrl || DEFAULT_BACKEND_URL);
+  await fetch(`${backendUrl}/api/memories`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ memory: page })
+  });
+}
+async function deleteRemoteMemory(url) {
+  const data = await storageGet(['remy_auth','omni_ai']);
+  const token = data.remy_auth?.token;
+  if (!token) return;
+  const backendUrl = cleanBackendUrl(data.omni_ai?.backendUrl || DEFAULT_BACKEND_URL);
+  await fetch(`${backendUrl}/api/memories`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ url })
+  });
+}
+function cleanBackendUrl(url) {
+  const clean = String(url || DEFAULT_BACKEND_URL).replace(/\/$/, '');
+  return (clean.includes('localhost') || clean.includes('127.0.0.1')) ? DEFAULT_BACKEND_URL : clean;
+}
+
 function storageGet(keys) { return new Promise(resolve => chrome.storage.local.get(keys, resolve)); }
 function storageSet(obj) { return new Promise(resolve => chrome.storage.local.set(obj, resolve)); }
