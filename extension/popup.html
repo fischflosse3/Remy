@@ -20,4 +20,16 @@
 
     <section class="memories-card"><div class="section-head"><h2>Gemerkte Seiten</h2><button id="clearAll" class="tiny-danger">alle löschen</button></div><div id="memories" class="memories"></div></section>
   </section>
-</main><script src="popup.js"></script></body></html>
+</main>
+<div id="deleteModal" class="remy-modal hidden" role="dialog" aria-modal="true" aria-labelledby="deleteTitle">
+  <div class="remy-modal-card">
+    <div class="modal-mascot"><img src="logo.svg" alt=""></div>
+    <h2 id="deleteTitle">Konto wirklich löschen?</h2>
+    <p>Dein Remy-Konto und deine gespeicherten Remy-Daten werden dauerhaft entfernt. Falls du Remy Plus nutzt, kündige dein Abo bitte zuerst.</p>
+    <div class="modal-actions">
+      <button id="cancelDelete" class="secondary-btn">Abbrechen</button>
+      <button id="confirmDelete" class="danger-btn compact-danger">Konto löschen</button>
+    </div>
+  </div>
+</div>
+<script src="popup.js"></script></body></html>

@@ -33,7 +33,26 @@ function renderPrivacy(){ const cats=state.settings?.blockedCategories||{}; docu
 function renderMemories(){ const pages=state.pages||[]; $('memories').innerHTML=pages.length?pages.slice(0,8).map(p=>`<article class="memory"><div class="favicon">${escapeHtml((p.domain||p.title||'?')[0].toUpperCase())}</div><div><div class="memory-title-row"><div class="memory-title">${escapeHtml(p.title||'Ohne Titel')}</div><button class="delete-memory" data-id="${escapeHtml(p.id||'')}">×</button></div><div class="memory-meta">${escapeHtml(p.domain||'')}</div><div class="memory-summary">${escapeHtml(p.summary||'')}</div><button class="open-memory" data-url="${escapeHtml(p.url||'')}">Öffnen</button></div></article>`).join(''):'<p class="empty">Noch leer. Öffne eine normale Webseite und warte kurz.</p>'; $('memories').querySelectorAll('.delete-memory').forEach(b=>b.onclick=async()=>{const r=await send({type:'OMNI_DELETE_PAGE',id:b.dataset.id}); if(r?.ok){state.pages=r.pages;renderMemories();}}); $('memories').querySelectorAll('.open-memory').forEach(b=>b.onclick=()=>chrome.tabs.create({url:b.dataset.url})); }
 async function openUpgrade(){ if(!state.loggedIn){send({type:'REMY_START_LOGIN'});return;} const res=await fetch(`${getBackendUrl()}/api/create-checkout-session`,{method:'POST',headers:authHeaders(),body:'{}'}); const d=await res.json().catch(()=>({})); if(d.url) chrome.tabs.create({url:d.url}); else $('answer').textContent=d.error||'Upgrade ist noch nicht eingerichtet.'; }
 async function manageSubscription(){ $('answer').textContent='Abo-Verwaltung wird später über Stripe geöffnet, sobald dein Customer Portal vollständig verbunden ist.'; }
-async function deleteAccount(){ const msg='Du bist dabei, dein Remy-Konto zu löschen. Dadurch werden Konto und gespeicherte Remy-Daten dauerhaft entfernt. Wenn du Remy Plus nutzt, kündige bitte zuerst dein Abo. Wirklich fortfahren?'; if(!confirm(msg))return; const res=await fetch(`${getBackendUrl()}/api/auth/delete`,{method:'POST',headers:authHeaders(),body:'{}'}); const d=await res.json().catch(()=>({})); if(!res.ok){alert(d.error||'Konto konnte nicht gelöscht werden.');return;} await send({type:'REMY_LOGOUT'}); await refreshAll(); }
+async function deleteAccount(){
+  const confirmed = await showDeleteModal();
+  if(!confirmed) return;
+  const res=await fetch(`${getBackendUrl()}/api/auth/delete`,{method:'POST',headers:authHeaders(),body:'{}'});
+  const d=await res.json().catch(()=>({}));
+  if(!res.ok){ $('answer').textContent=d.error||'Konto konnte nicht gelöscht werden.'; return; }
+  await send({type:'REMY_LOGOUT'});
+  await refreshAll();
+}
+function showDeleteModal(){
+  return new Promise(resolve=>{
+    const modal=$('deleteModal'), cancel=$('cancelDelete'), confirm=$('confirmDelete');
+    if(!modal||!cancel||!confirm){ resolve(window.confirm('Konto wirklich löschen?')); return; }
+    const close=(value)=>{ modal.classList.add('hidden'); cancel.onclick=null; confirm.onclick=null; resolve(value); };
+    cancel.onclick=()=>close(false);
+    confirm.onclick=()=>close(true);
+    modal.onclick=(e)=>{ if(e.target===modal) close(false); };
+    modal.classList.remove('hidden');
+  });
+}
 function setAiStatus(ok,text){const el=$('aiStatus');el.classList.toggle('ok',ok);el.classList.toggle('off',!ok);el.textContent=text;}
 function renderSources(sources){ if(!sources.length)return''; return '<div class="sources-title">Passende Links</div>'+sources.map(s=>`<div class="source"><strong>${escapeHtml(s.title||s.domain||'Quelle')}</strong><br><span>${escapeHtml(s.domain||'')}</span><button class="open-source" data-url="${escapeHtml(s.url||'')}">Öffnen</button></div>`).join(''); }
 function bindLinks(){ document.querySelectorAll('.open-source').forEach(b=>b.onclick=()=>chrome.tabs.create({url:b.dataset.url})); }
