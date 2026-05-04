@@ -1,15 +1,16 @@
 {
   "name": "remy-backend",
-  "version": "0.9.0",
+  "version": "0.1.0",
+  "private": true,
   "type": "module",
-  "scripts": { "start": "node server.js" },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
   "dependencies": {
-    "@supabase/supabase-js": "latest",
-    "bcryptjs": "latest",
     "cors": "latest",
     "dotenv": "latest",
     "express": "latest",
-    "jsonwebtoken": "latest",
     "openai": "latest",
     "stripe": "latest"
   }
