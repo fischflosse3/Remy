@@ -37,6 +37,11 @@ const pendingDevices = new Map();
 const rateBuckets = new Map();
 
 app.use(cors({ origin: true }));
+
+// Stripe-Webhooks müssen den rohen Body bekommen. Diese Route MUSS vor express.json stehen,
+// sonst kann Stripe die Signatur nicht mehr prüfen.
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), handleStripeWebhook);
+
 app.use(express.json({ limit: '1mb' }));
 app.use(rateLimitMiddleware);
 
@@ -110,20 +115,6 @@ app.post('/api/auth/delete', requireUser, async (req, res) => {
 
 app.get('/api/usage', requireUser, async (req, res) => res.json({ ok: true, usage: publicUsage(await getUsage(req.user.id, req.user.plan), req.user.plan, await hasFreeTrialAvailable(req.user.id, req.user.plan)) }));
 
-function normalizeChatHistory(raw) {
-  if (!Array.isArray(raw)) return [];
-  return raw.slice(-8).map(item => {
-    const role = item?.role === 'assistant' || item?.who === 'bot' || item?.who === 'assistant' ? 'assistant' : 'user';
-    const text = clip(item?.content || item?.text || '', 700);
-    return text ? { role, text } : null;
-  }).filter(Boolean);
-}
-function renderChatHistory(history) {
-  if (!history.length) return 'Keine vorherigen Nachrichten in diesem Chat.';
-  return history.map((m, i) => `${i + 1}. ${m.role === 'assistant' ? 'Remy' : 'Nutzer'}: ${m.text}`).join('\n');
-}
-
-
 app.post('/api/ask', requireUser, async (req, res) => {
   try {
     if (!openai) return res.status(400).json({ error: 'Remy kann gerade nicht antworten. Der API-Key ist im Backend noch nicht eingerichtet.' });
@@ -134,14 +125,13 @@ app.post('/api/ask', requireUser, async (req, res) => {
 
     const question = clip(req.body?.question, 900);
     const mode = req.body?.mode === 'public' ? 'public' : 'local';
-    const chatHistory = normalizeChatHistory(req.body?.history);
     const memories = Array.isArray(req.body?.memories) ? req.body.memories.slice(0, 10) : [];
     if (!question) return res.status(400).json({ error: 'Anfrage fehlt.' });
     if (mode === 'local' && !memories.length) return res.status(400).json({ error: 'Keine Erinnerungen übergeben.' });
 
     const systemText = mode === 'public'
-      ? 'Du bist Remy im Modus Allgemein fragen. Antworte hilfreich, klar und kurz auf Deutsch. Nutze allgemeines Wissen. Beziehe dich auf den bisherigen Chatverlauf, wenn die neue Anfrage eine Folgefrage ist. Nutze keine Browser-Erinnerungen und frage nicht nach privaten Browserdaten.'
-      : 'Du bist Remy im Modus Browser suchen. Antworte auf Deutsch, klar und knapp. Nutze ausschließlich die übergebenen Browser-Erinnerungen, die sichere aktuelle Seite und den bisherigen Chatverlauf. Verwende kein allgemeines Wissen, wenn es nicht aus den Quellen hervorgeht. Wenn eine Folgefrage gestellt wird, beziehe sie auf das vorherige Thema im Chat. Wenn die Antwort nicht in den Erinnerungen steht, sage ehrlich, dass du es in den gespeicherten Seiten nicht findest. Erfinde keine Quellen. Nenne passende Quellen mit Titel, Domain und URL.';
+      ? 'Du bist Remy im Modus Allgemein fragen. Antworte hilfreich, klar und kurz auf Deutsch. Nutze allgemeines Wissen. Nutze keine Browser-Erinnerungen und frage nicht nach privaten Browserdaten.'
+      : 'Du bist Remy im Modus Browser-Suche. Antworte auf Deutsch, klar und knapp. Nutze ausschließlich die übergebenen Browser-Erinnerungen und die sichere aktuelle Seite. Verwende kein allgemeines Wissen, wenn es nicht aus den Quellen hervorgeht. Wenn die Antwort nicht in den Erinnerungen steht, sage ehrlich, dass du es in den gespeicherten Seiten nicht findest. Erfinde keine Quellen. Nenne passende Quellen mit Titel, Domain und URL.';
     const context = mode === 'local' ? memories.map((m, i) => [
       `Quelle ${i + 1}:`, `Titel: ${clip(m.title, 180)}`, `Domain: ${clip(m.domain, 120)}`, `URL: ${clip(m.url, 400)}`,
       `Gespeichert: ${clip(m.savedAt, 80)}`, m.platform ? `Plattform: ${clip(m.platform, 80)}` : '', m.searchQuery ? `Suchanfrage: ${clip(m.searchQuery, 160)}` : '',
@@ -150,7 +140,7 @@ app.post('/api/ask', requireUser, async (req, res) => {
 
     const response = await openai.responses.create({ model, input: [
       { role: 'system', content: [{ type: 'input_text', text: systemText }] },
-      { role: 'user', content: [{ type: 'input_text', text: `Modus: ${mode}\nBisheriger Chatverlauf:\n${renderChatHistory(chatHistory)}\n\nNeue Anfrage:\n${question}\n\nKontext:\n${context}` }] }
+      { role: 'user', content: [{ type: 'input_text', text: `Modus: ${mode}\nAnfrage:\n${question}\n\nKontext:\n${context}` }] }
     ]});
     let nextUsage;
     const trialAvailable = trialAvailableBefore;
@@ -169,14 +159,109 @@ app.post('/api/create-checkout-session', requireUser, async (req, res) => {
     if (stripePaymentLink) return res.json({ ok: true, url: stripePaymentLink });
     return res.status(400).json({ error: 'Stripe ist noch nicht vollständig eingerichtet.' });
   }
-  const session = await stripe.checkout.sessions.create({
-    mode: 'subscription', line_items: [{ price: stripePriceId, quantity: 1 }], customer_email: req.user.email,
-    success_url: `${publicBaseUrl}/auth?success=plus`, cancel_url: `${publicBaseUrl}/auth?cancel=1`, metadata: { remy_user_id: req.user.id }
-  });
+
+  const sessionConfig = {
+    mode: 'subscription',
+    line_items: [{ price: stripePriceId, quantity: 1 }],
+    success_url: `${publicBaseUrl}/auth?success=plus`,
+    cancel_url: `${publicBaseUrl}/auth?cancel=1`,
+    client_reference_id: req.user.id,
+    metadata: { remy_user_id: req.user.id, plan: 'plus' },
+    subscription_data: { metadata: { remy_user_id: req.user.id, plan: 'plus' } }
+  };
+
+  if (req.user.stripe_customer_id) {
+    sessionConfig.customer = req.user.stripe_customer_id;
+  } else {
+    sessionConfig.customer_email = req.user.email;
+    sessionConfig.customer_creation = 'always';
+  }
+
+  const session = await stripe.checkout.sessions.create(sessionConfig);
   res.json({ ok: true, url: session.url });
 });
 
+app.get('/api/stripe/webhook', (_req, res) => {
+  res.json({ ok: true, message: 'Stripe webhook endpoint bereit. Stripe sendet hier per POST.' });
+});
+
 app.listen(port, () => console.log(`Remy backend läuft auf Port ${port}`));
+
+
+async function handleStripeWebhook(req, res) {
+  if (!stripe) return res.status(500).send('Stripe ist nicht eingerichtet.');
+
+  let event;
+  try {
+    const signature = req.headers['stripe-signature'];
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+    if (webhookSecret) {
+      event = stripe.webhooks.constructEvent(req.body, signature, webhookSecret);
+    } else {
+      // Nur als Entwickler-Fallback. Für Produktion sollte STRIPE_WEBHOOK_SECRET gesetzt sein.
+      event = JSON.parse(req.body.toString('utf8'));
+    }
+  } catch (error) {
+    console.error('Stripe Webhook Signatur/Parsing fehlgeschlagen:', error.message);
+    return res.status(400).send(`Webhook Error: ${error.message}`);
+  }
+
+  try {
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data.object;
+      const userId = session.metadata?.remy_user_id || session.client_reference_id || session.subscription_data?.metadata?.remy_user_id;
+      if (!userId) {
+        console.warn('Stripe checkout.session.completed ohne remy_user_id:', session.id);
+        return res.json({ received: true, ignored: true, reason: 'missing_remy_user_id' });
+      }
+
+      await updateUserBilling(userId, {
+        plan: 'plus',
+        stripe_customer_id: typeof session.customer === 'string' ? session.customer : session.customer?.id,
+        stripe_subscription_id: typeof session.subscription === 'string' ? session.subscription : session.subscription?.id,
+      });
+      return res.json({ received: true, plan: 'plus', userId });
+    }
+
+    if (event.type === 'invoice.payment_succeeded') {
+      const invoice = event.data.object;
+      const customerId = typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id;
+      if (customerId) await updateUserByStripeCustomer(customerId, { plan: 'plus' });
+      return res.json({ received: true });
+    }
+
+    if (event.type === 'customer.subscription.deleted') {
+      const subscription = event.data.object;
+      const userId = subscription.metadata?.remy_user_id;
+      const customerId = typeof subscription.customer === 'string' ? subscription.customer : subscription.customer?.id;
+      if (userId) await updateUserBilling(userId, { plan: 'free' });
+      else if (customerId) await updateUserByStripeCustomer(customerId, { plan: 'free' });
+      return res.json({ received: true, plan: 'free' });
+    }
+
+    if (event.type === 'customer.subscription.updated') {
+      const subscription = event.data.object;
+      const userId = subscription.metadata?.remy_user_id;
+      const customerId = typeof subscription.customer === 'string' ? subscription.customer : subscription.customer?.id;
+      const activeStatuses = new Set(['active', 'trialing', 'past_due']);
+      const plan = activeStatuses.has(subscription.status) ? 'plus' : 'free';
+      if (userId) await updateUserBilling(userId, { plan, stripe_customer_id: customerId, stripe_subscription_id: subscription.id });
+      else if (customerId) await updateUserByStripeCustomer(customerId, { plan });
+      return res.json({ received: true, plan });
+    }
+
+    if (event.type === 'invoice.payment_failed') {
+      console.warn('Stripe invoice.payment_failed empfangen:', event.data.object?.id);
+      return res.json({ received: true });
+    }
+
+    res.json({ received: true, ignored: true, type: event.type });
+  } catch (error) {
+    console.error('Stripe Webhook Verarbeitung fehlgeschlagen:', error);
+    res.status(500).send(`Webhook processing failed: ${error.message}`);
+  }
+}
 
 function signToken(user) { return jwt.sign({ sub: user.id, email: user.email }, authSecret, { expiresIn: '90d' }); }
 async function requireUser(req, res, next) {
@@ -305,6 +390,45 @@ async function incrementUsage(userId, plan = 'free') {
   }
   const s = await readStore(); s.usage[`${userId}:${usage.month}`] = { ...usage, used: nextUsed }; await writeStore(s); return { ...s.usage[`${userId}:${usage.month}`], plan };
 }
+
+
+async function updateUserBilling(userId, updates) {
+  const clean = {};
+  if (updates.plan) clean.plan = updates.plan;
+  if (updates.stripe_customer_id) clean.stripe_customer_id = updates.stripe_customer_id;
+  if (updates.stripe_subscription_id) clean.stripe_subscription_id = updates.stripe_subscription_id;
+  if (!Object.keys(clean).length) return null;
+
+  if (supabase) {
+    const { data, error } = await supabase.from('remy_users').update(clean).eq('id', userId).select('*').maybeSingle();
+    if (error) throw new Error(`Supabase Plan-Update fehlgeschlagen: ${error.message}`);
+    if (!data) console.warn('Kein Remy-Nutzer für Stripe-Update gefunden:', userId);
+    return data;
+  }
+
+  const s = await readStore();
+  if (s.users[userId]) s.users[userId] = { ...s.users[userId], ...clean };
+  await writeStore(s);
+  return s.users[userId] || null;
+}
+
+async function updateUserByStripeCustomer(customerId, updates) {
+  if (!customerId) return null;
+  if (supabase) {
+    const clean = { ...updates };
+    const { data, error } = await supabase.from('remy_users').update(clean).eq('stripe_customer_id', customerId).select('*').maybeSingle();
+    if (error) throw new Error(`Supabase Stripe-Customer-Update fehlgeschlagen: ${error.message}`);
+    if (!data) console.warn('Kein Remy-Nutzer für Stripe-Customer gefunden:', customerId);
+    return data;
+  }
+
+  const s = await readStore();
+  const user = Object.values(s.users).find(u => u.stripe_customer_id === customerId);
+  if (user) s.users[user.id] = { ...user, ...updates };
+  await writeStore(s);
+  return user || null;
+}
+
 
 function renderAuthPage(deviceId) {
   return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Remy Login</title><style>

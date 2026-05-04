@@ -23,3 +23,5 @@ create table if not exists remy_free_trials (
   used boolean not null default false,
   used_at timestamptz
 );
+
+alter table if exists remy_users add column if not exists stripe_subscription_id text;

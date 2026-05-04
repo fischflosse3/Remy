@@ -1,7 +1,6 @@
 const $ = id => document.getElementById(id);
 const DEFAULT_BACKEND_URL = 'https://remy-backend-uqrf.onrender.com';
 let state = { pages: [], settings: {}, usage: null, mode: 'local', auth: null, loggedIn: false };
-const chatHistories = { local: [], public: [] };
 function send(message){ return new Promise(resolve => chrome.runtime.sendMessage(message, resolve)); }
 function storageGet(keys){ return new Promise(resolve => chrome.storage.local.get(keys, resolve)); }
 function getBackendUrl(){ return DEFAULT_BACKEND_URL; }
@@ -42,9 +41,7 @@ async function ask(question){
   question=String(question||'').trim();
   if(!question)return;
   $('answer').innerHTML='<span class="ai-label">Remy denkt…</span>';
-  const activeMode = state.mode === 'public' ? 'public' : 'local';
-  const history = chatHistories[activeMode].slice(-8);
-  const r=await send({type:'REMY_SIDEBAR_ASK',question,mode:activeMode,history});
+  const r=await send({type:'REMY_SIDEBAR_ASK',question,mode:state.mode});
   if(!r?.ok){
     $('answer').textContent=r?.error||'Remy konnte nicht antworten.';
     if(r?.usage){state.usage=r.usage;renderUsage();}
@@ -53,9 +50,6 @@ async function ask(question){
   }
   if(r.usage){state.usage=r.usage;renderUsage();}
   await refreshUsage();
-  chatHistories[activeMode].push({ role:'user', content: question });
-  chatHistories[activeMode].push({ role:'assistant', content: r.answer || 'Keine Antwort.' });
-  if(chatHistories[activeMode].length > 16) chatHistories[activeMode].splice(0, chatHistories[activeMode].length - 16);
   $('answer').innerHTML=`<span class="ai-label">Antwort</span>\n${escapeHtml(r.answer||'Keine Antwort.')}${renderSources(r.sources||[])}`;
   bindLinks();
   $('question').value='';
