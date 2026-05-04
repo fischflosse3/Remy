@@ -2,378 +2,440 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import OpenAI from 'openai';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import Stripe from 'stripe';
+import { createClient } from '@supabase/supabase-js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const dataDir = path.join(__dirname, 'data');
-const usageFile = path.join(dataDir, 'usage.json');
-const usersFile = path.join(dataDir, 'users.json');
+const storeFile = path.join(dataDir, 'store.json');
 
 const app = express();
 const port = Number(process.env.PORT || 8787);
+const publicBaseUrl = (process.env.PUBLIC_BASE_URL || `http://localhost:${port}`).replace(/\/$/, '');
 const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
-const freeLimit = Number(process.env.FREE_MONTHLY_QUESTIONS || 10);
-const plusLimit = Number(process.env.PLUS_MONTHLY_QUESTIONS || 100);
-const plusPrice = process.env.PLUS_PRICE || '3,99 € / Monat';
-const paymentLink = process.env.STRIPE_PAYMENT_LINK || '';
-const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
-const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
-const stripePriceId = process.env.STRIPE_PRICE_ID || '';
-const stripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;
-const authSecret = process.env.AUTH_SECRET || 'dev-secret-change-me';
-const maxQuestionChars = Number(process.env.MAX_QUESTION_CHARS || 800);
-const maxMemoryChars = Number(process.env.MAX_MEMORY_CHARS || 2600);
-const maxMemories = Number(process.env.MAX_MEMORIES_PER_ASK || 10);
+const freeLimit = Number(process.env.FREE_WEEKLY_REQUESTS || 7);
+const plusLimit = Number(process.env.UNLIMITED_MONTHLY_REQUESTS || 500);
+const lifetimeLimit = Number(process.env.LIFETIME_MONTHLY_REQUESTS || 200);
+const plusPrice = process.env.UNLIMITED_PRICE || '3,99 € / Monat';
+const paidPlanName = process.env.PAID_PLAN_NAME || 'Remy Unlimited';
+const authSecret = process.env.AUTH_SECRET || 'dev-change-me';
 const hasKey = Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'dein_api_key_hier');
 const openai = hasKey ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
+const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
+const stripePriceId = process.env.STRIPE_PRICE_ID || '';
+const stripePaymentLink = process.env.STRIPE_PAYMENT_LINK || '';
+const supabase = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(process.env.SUPABASE_URL.replace(/\/$/, ''), process.env.SUPABASE_SERVICE_ROLE_KEY)
+  : null;
+const pendingDevices = new Map();
 const rateBuckets = new Map();
 
 app.use(cors({ origin: true }));
 
-app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
-  if (!stripe || !stripeWebhookSecret) return res.status(400).send('Stripe ist noch nicht vollständig konfiguriert.');
-  const signature = req.headers['stripe-signature'];
-  let event;
-  try {
-    event = stripe.webhooks.constructEvent(req.body, signature, stripeWebhookSecret);
-  } catch (error) {
-    console.error('Stripe Webhook Signatur ungültig:', error.message);
-    return res.status(400).send(`Webhook Error: ${error.message}`);
-  }
-  try {
-    await handleStripeEvent(event);
-    res.json({ received: true });
-  } catch (error) {
-    console.error('Stripe Webhook Verarbeitung fehlgeschlagen:', error);
-    res.status(500).send('Webhook konnte nicht verarbeitet werden.');
-  }
-});
+// Stripe-Webhooks müssen den rohen Body bekommen. Diese Route MUSS vor express.json stehen,
+// sonst kann Stripe die Signatur nicht mehr prüfen.
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), handleStripeWebhook);
 
 app.use(express.json({ limit: '1mb' }));
 app.use(rateLimitMiddleware);
 
-app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'remy-backend', hasKey, model, freeLimit, plusLimit, plusPrice, auth: true, paymentLinkConfigured: Boolean(paymentLink), stripeConfigured: Boolean(stripe), stripePriceConfigured: Boolean(stripePriceId) });
+app.get('/health', (_req, res) => res.json({ ok: true, service: 'remy-backend', hasKey, model, supabase: Boolean(supabase), auth: true }));
+app.get('/api/config', (_req, res) => res.json({ ok: true, plusPrice, paymentLink: stripePaymentLink, publicBaseUrl, hasCheckout: Boolean(stripe && stripePriceId) }));
+
+function sendAuthPage(req, res) {
+  const deviceId = safeId(req.query.deviceId || `web-${Date.now()}`);
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.end(renderAuthPage(deviceId));
+}
+
+app.get('/', (_req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.end('<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Remy</title><style>body{font-family:system-ui,sans-serif;background:#f8fafc;color:#111827;display:grid;place-items:center;min-height:100vh;margin:0}.card{background:white;border-radius:24px;padding:28px;box-shadow:0 20px 60px #0001;max-width:460px}a{display:inline-block;margin-top:14px;background:#4f46e5;color:white;padding:12px 16px;border-radius:14px;text-decoration:none;font-weight:800}</style></head><body><main class="card"><h1>Remy Backend läuft</h1><p>Diese Seite ist nur der Server hinter Remy. Für Login öffne die Remy-Erweiterung oder nutze die Login-Seite.</p><a href="/auth">Zum Login</a></main></body></html>');
 });
+app.get('/auth', sendAuthPage);
+app.get('/login', sendAuthPage);
+app.get('/signin', sendAuthPage);
+app.get('/out', sendAuthPage);
 
 app.post('/api/auth/register', async (req, res) => {
   try {
     const email = normalizeEmail(req.body?.email);
     const password = String(req.body?.password || '');
-    if (!email) return res.status(400).json({ error: 'Bitte gib eine gültige E-Mail-Adresse ein.' });
-    if (password.length < 8) return res.status(400).json({ error: 'Das Passwort muss mindestens 8 Zeichen haben.' });
-    const store = await readUsersStore();
-    if (store.usersByEmail[email]) return res.status(409).json({ error: 'Für diese E-Mail gibt es schon ein Konto. Bitte melde dich an.' });
-    const id = `user_${crypto.randomUUID()}`;
-    const passwordRecord = hashPassword(password);
-    const user = { id, email, plan: 'free', createdAt: new Date().toISOString(), ...passwordRecord };
-    store.usersByEmail[email] = user;
-    store.usersById[id] = email;
-    await writeUsersStore(store);
-    const token = signToken({ sub: id, email, plan: user.plan });
+    const deviceId = safeId(req.body?.deviceId || '');
+    if (!email || password.length < 6) return res.status(400).json({ error: 'E-Mail oder Passwort fehlt. Das Passwort braucht mindestens 6 Zeichen.' });
+    const existing = await findUserByEmail(email);
+    if (existing) return res.status(409).json({ error: 'Dieses Konto existiert bereits. Bitte einloggen.' });
+    const user = await createUser(email, await bcrypt.hash(password, 10));
+    const token = signToken(user);
+    if (deviceId) pendingDevices.set(deviceId, { token, email, userId: user.id, at: Date.now() });
     res.json({ ok: true, token, user: publicUser(user) });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Konto konnte gerade nicht erstellt werden.' });
-  }
+  } catch (error) { console.error(error); res.status(500).json({ error: 'Registrierung konnte nicht abgeschlossen werden.' }); }
 });
 
 app.post('/api/auth/login', async (req, res) => {
   try {
     const email = normalizeEmail(req.body?.email);
     const password = String(req.body?.password || '');
-    const store = await readUsersStore();
-    const user = email ? store.usersByEmail[email] : null;
-    if (!user || !verifyPassword(password, user)) return res.status(401).json({ error: 'E-Mail oder Passwort stimmt nicht.' });
-    const token = signToken({ sub: user.id, email: user.email, plan: user.plan || 'free' });
+    const deviceId = safeId(req.body?.deviceId || '');
+    const user = email ? await findUserByEmail(email) : null;
+    if (!user || !(await bcrypt.compare(password, user.password_hash || ''))) return res.status(401).json({ error: 'E-Mail oder Passwort ist falsch.' });
+    const token = signToken(user);
+    if (deviceId) pendingDevices.set(deviceId, { token, email, userId: user.id, at: Date.now() });
     res.json({ ok: true, token, user: publicUser(user) });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Login ist gerade nicht möglich.' });
-  }
+  } catch (error) { console.error(error); res.status(500).json({ error: 'Login konnte nicht abgeschlossen werden.' }); }
 });
 
-app.get('/api/auth/me', async (req, res) => {
-  const identity = await getIdentity(req);
-  if (!identity.user) return res.status(401).json({ error: 'Nicht angemeldet.' });
-  res.json({ ok: true, user: publicUser(identity.user) });
+app.get('/api/auth/device/:deviceId', (req, res) => {
+  const session = pendingDevices.get(safeId(req.params.deviceId));
+  if (!session) return res.status(202).json({ ok: false, pending: true });
+  pendingDevices.delete(safeId(req.params.deviceId));
+  res.json({ ok: true, token: session.token, user: { id: session.userId, email: session.email } });
 });
 
-app.get('/api/checkout-link', (_req, res) => {
-  if (!paymentLink) return res.status(404).json({ error: 'Der Zahlungslink ist noch nicht konfiguriert.' });
-  res.json({ ok: true, url: paymentLink, mode: 'payment_link' });
+
+app.post('/api/auth/request-password-reset', async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  if (!email) return res.status(400).json({ error: 'Bitte gib deine E-Mail ein.' });
+  // Sicherer MVP: Wir verraten nicht, ob die E-Mail existiert. Echte Reset-Mails werden später mit einem Mail-Dienst verbunden.
+  res.json({ ok: true, message: 'Wenn diese E-Mail bei Remy registriert ist, bekommst du später eine Passwort-E-Mail. Der E-Mail-Versand muss noch verbunden werden.' });
 });
 
-app.post('/api/create-checkout-session', async (req, res) => {
-  try {
-    const identity = await getIdentity(req);
-    if (!identity.user) return res.status(401).json({ error: 'Bitte melde dich zuerst an, damit Remy Plus deinem Konto zugeordnet werden kann.' });
-
-    if (!stripe || !stripePriceId) {
-      if (!paymentLink) return res.status(404).json({ error: 'Stripe ist noch nicht konfiguriert.' });
-      return res.json({ ok: true, url: paymentLink, mode: 'payment_link_fallback' });
-    }
-
-    const store = await readUsersStore();
-    const user = store.usersByEmail[identity.user.email];
-    let customerId = user.stripeCustomerId || '';
-    if (!customerId) {
-      const customer = await stripe.customers.create({ email: user.email, metadata: { remyUserId: user.id } });
-      customerId = customer.id;
-      user.stripeCustomerId = customerId;
-      user.updatedAt = new Date().toISOString();
-      await writeUsersStore(store);
-    }
-
-    const baseSuccess = process.env.STRIPE_SUCCESS_URL || 'https://remy-backend-uqrf.onrender.com/checkout/success';
-    const baseCancel = process.env.STRIPE_CANCEL_URL || 'https://remy-backend-uqrf.onrender.com/checkout/cancel';
-    const session = await stripe.checkout.sessions.create({
-      mode: 'subscription',
-      customer: customerId,
-      client_reference_id: user.id,
-      line_items: [{ price: stripePriceId, quantity: 1 }],
-      success_url: `${baseSuccess}?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: baseCancel,
-      metadata: { remyUserId: user.id },
-      subscription_data: { metadata: { remyUserId: user.id } }
-    });
-    res.json({ ok: true, url: session.url, mode: 'checkout_session' });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Checkout konnte gerade nicht erstellt werden.' });
-  }
+app.get('/api/auth/me', requireUser, async (req, res) => res.json({ ok: true, user: publicUser(req.user), usage: publicUsage(await getUsage(req.user.id, req.user.plan), req.user.plan, await hasFreeTrialAvailable(req.user.id, req.user.plan)) }));
+app.post('/api/auth/delete', requireUser, async (req, res) => {
+  if (req.user.plan === 'plus' || req.user.plan === 'lifetime') return res.status(400).json({ error: 'Du hast einen aktiven Plan. Bitte verwalte oder kündige ihn zuerst über Stripe.' });
+  await deleteUser(req.user.id);
+  res.json({ ok: true });
 });
 
-app.get('/checkout/success', (_req, res) => {
-  res.type('html').send('<!doctype html><meta charset="utf-8"><title>Remy Plus</title><body style="font-family:system-ui;padding:40px;background:#f5fbff;color:#203a57"><h1>Danke! Remy Plus wird aktiviert.</h1><p>Du kannst dieses Fenster schließen und Remy neu öffnen. Es kann ein paar Sekunden dauern, bis Stripe die Zahlung bestätigt hat.</p></body>');
-});
+app.get('/api/usage', requireUser, async (req, res) => res.json({ ok: true, usage: publicUsage(await getUsage(req.user.id, req.user.plan), req.user.plan, await hasFreeTrialAvailable(req.user.id, req.user.plan)) }));
 
-app.get('/checkout/cancel', (_req, res) => {
-  res.type('html').send('<!doctype html><meta charset="utf-8"><title>Remy Plus</title><body style="font-family:system-ui;padding:40px;background:#f5fbff;color:#203a57"><h1>Zahlung abgebrochen</h1><p>Du kannst jederzeit in Remy erneut auf Upgrade klicken.</p></body>');
-});
-
-app.post('/api/create-customer-portal-session', async (req, res) => {
-  try {
-    const identity = await getIdentity(req);
-    if (!identity.user) return res.status(401).json({ error: 'Bitte melde dich zuerst an, um dein Abo zu verwalten.' });
-    if (!stripe) return res.status(404).json({ error: 'Stripe ist noch nicht konfiguriert.' });
-
-    const store = await readUsersStore();
-    const user = store.usersByEmail[identity.user.email];
-    if (!user?.stripeCustomerId) {
-      return res.status(404).json({ error: 'Für dieses Konto wurde noch kein aktives Stripe-Abo gefunden.' });
-    }
-
-    const returnUrl = process.env.STRIPE_CUSTOMER_PORTAL_RETURN_URL || 'https://remy-backend-uqrf.onrender.com/checkout/success';
-    const session = await stripe.billingPortal.sessions.create({
-      customer: user.stripeCustomerId,
-      return_url: returnUrl
-    });
-    res.json({ ok: true, url: session.url });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Abo-Verwaltung konnte gerade nicht geöffnet werden. Prüfe, ob das Stripe Customer Portal aktiviert ist.' });
-  }
-});
-
-app.get('/api/usage', async (req, res) => {
-  const identity = await getIdentity(req);
-  const usage = await getUsage(identity.userId, identity.plan);
-  res.json({ ok: true, usage: publicUsage(usage) });
-});
-
-app.post('/api/ask', async (req, res) => {
+app.post('/api/ask', requireUser, async (req, res) => {
   try {
     if (!openai) return res.status(400).json({ error: 'Remy kann gerade nicht antworten. Der API-Key ist im Backend noch nicht eingerichtet.' });
-    const identity = await getIdentity(req);
-    const usage = await getUsage(identity.userId, identity.plan);
-    const limit = usage.plan === 'plus' ? plusLimit : freeLimit;
-    if (usage.used >= limit) {
-      return res.status(402).json({ error: usage.plan === 'plus' ? `Du hast dein Plus-Limit von ${plusLimit} KI-Fragen für diesen Monat erreicht.` : `Du hast deine ${freeLimit} kostenlosen KI-Fragen für diesen Monat verbraucht. Upgrade auf Plus für ${plusPrice}.`, usage: publicUsage(usage) });
+    const usage = await getUsage(req.user.id, req.user.plan);
+    const limit = planLimit(req.user.plan);
+    const trialAvailableBefore = await hasFreeTrialAvailable(req.user.id, req.user.plan);
+    if (usage.used >= limit && !trialAvailableBefore) return res.status(402).json({ error: `Du hast deine ${limit} Anfragen für diesen Zeitraum verbraucht.`, usage: publicUsage(usage, req.user.plan, false) });
+
+    const question = clip(req.body?.question, 900);
+    const mode = req.body?.mode === 'public' ? 'public' : 'local';
+    const memories = Array.isArray(req.body?.memories) ? req.body.memories.slice(0, 10) : [];
+    if (!question) return res.status(400).json({ error: 'Anfrage fehlt.' });
+    if (mode === 'local' && !memories.length) return res.status(400).json({ error: 'Keine Erinnerungen übergeben.' });
+
+    const systemText = mode === 'public'
+      ? 'Du bist Remy im Modus Allgemein fragen. Antworte hilfreich, klar und kurz auf Deutsch. Nutze allgemeines Wissen. Nutze keine Browser-Erinnerungen und frage nicht nach privaten Browserdaten.'
+      : 'Du bist Remy im Modus Browser-Suche. Antworte auf Deutsch, klar und knapp. Nutze ausschließlich die übergebenen Browser-Erinnerungen und die sichere aktuelle Seite. Verwende kein allgemeines Wissen, wenn es nicht aus den Quellen hervorgeht. Wenn die Antwort nicht in den Erinnerungen steht, sage ehrlich, dass du es in den gespeicherten Seiten nicht findest. Erfinde keine Quellen. Nenne passende Quellen mit Titel, Domain und URL.';
+    const context = mode === 'local' ? memories.map((m, i) => [
+      `Quelle ${i + 1}:`, `Titel: ${clip(m.title, 180)}`, `Domain: ${clip(m.domain, 120)}`, `URL: ${clip(m.url, 400)}`,
+      `Gespeichert: ${clip(m.savedAt, 80)}`, m.platform ? `Plattform: ${clip(m.platform, 80)}` : '', m.searchQuery ? `Suchanfrage: ${clip(m.searchQuery, 160)}` : '',
+      `Kurzfassung: ${clip(m.summary, 700)}`, `Textauszug: ${clip(m.text, 2500)}`
+    ].filter(Boolean).join('\n')).join('\n\n---\n\n') : 'Keine lokalen Erinnerungen: öffentliche allgemeine Anfrage.';
+
+    const response = await openai.responses.create({ model, input: [
+      { role: 'system', content: [{ type: 'input_text', text: systemText }] },
+      { role: 'user', content: [{ type: 'input_text', text: `Modus: ${mode}\nAnfrage:\n${question}\n\nKontext:\n${context}` }] }
+    ]});
+    let nextUsage;
+    const trialAvailable = trialAvailableBefore;
+    if (trialAvailable) {
+      await markFreeTrialUsed(req.user.id);
+      nextUsage = await getUsage(req.user.id, req.user.plan);
+    } else {
+      nextUsage = await incrementUsage(req.user.id, req.user.plan);
     }
+    res.json({ ok: true, answer: response.output_text || 'Ich konnte keine Antwort erzeugen.', usage: publicUsage(nextUsage, req.user.plan, await hasFreeTrialAvailable(req.user.id, req.user.plan)) });
+  } catch (error) { console.error(error); res.status(500).json({ error: 'Remy konnte gerade keine KI-Antwort erzeugen.' }); }
+});
 
-    const question = clip(req.body?.question, maxQuestionChars);
-    const memories = Array.isArray(req.body?.memories) ? req.body.memories.slice(0, maxMemories) : [];
-    if (!question) return res.status(400).json({ error: 'Frage fehlt.' });
-    if (!memories.length) return res.status(400).json({ error: 'Keine Erinnerungen übergeben.' });
+app.post('/api/create-checkout-session', requireUser, async (req, res) => {
+  if (!stripe || !stripePriceId) {
+    if (stripePaymentLink) return res.json({ ok: true, url: stripePaymentLink });
+    return res.status(400).json({ error: 'Stripe ist noch nicht vollständig eingerichtet.' });
+  }
 
-    const context = memories.map((m, index) => [
-      `Quelle ${index + 1}:`,
-      `Titel: ${clip(m.title, 180)}`,
-      `Domain: ${clip(m.domain, 120)}`,
-      `URL: ${clip(m.url, 400)}`,
-      `Gespeichert: ${clip(m.savedAt, 80)}`,
-      m.platform ? `Plattform: ${clip(m.platform, 80)}` : '',
-      m.language?.detected ? `Erkannte Sprache: ${clip(m.language.detected, 40)}` : '',
-      m.language?.htmlLang ? `HTML-Sprache: ${clip(m.language.htmlLang, 40)}` : '',
-      m.media?.channel ? `Kanal/Creator: ${clip(m.media.channel, 120)}` : '',
-      m.media?.game ? `Kategorie: ${clip(m.media.game, 120)}` : '',
-      m.searchQuery ? `Suchanfrage: ${clip(m.searchQuery, 160)}` : '',
-      `Kurzfassung: ${clip(m.summary, 760)}`,
-      `Textauszug: ${clip(m.text, maxMemoryChars)}`
-    ].filter(Boolean).join('\n')).join('\n\n---\n\n');
+  const sessionConfig = {
+    mode: 'subscription',
+    line_items: [{ price: stripePriceId, quantity: 1 }],
+    success_url: `${publicBaseUrl}/auth?success=plus`,
+    cancel_url: `${publicBaseUrl}/auth?cancel=1`,
+    client_reference_id: req.user.id,
+    metadata: { remy_user_id: req.user.id, plan: 'plus' },
+    subscription_data: { metadata: { remy_user_id: req.user.id, plan: 'plus' } }
+  };
 
-    const response = await openai.responses.create({
-      model,
-      input: [
-        { role: 'system', content: [{ type: 'input_text', text: 'Du bist Remy, ein hilfreiches Browser-Gedächtnis. Antworte auf Deutsch, klar und knapp. Nutze nur die übergebenen lokalen Erinnerungen und die aktuelle Seite als Grundlage. Wenn die Frage nach der aktuellen Sprache fragt, prüfe die erkannten Sprachfelder und den Textauszug. Wenn du unsicher bist, sag es. Erfinde keine Quellen. Nenne am Ende 1-3 passende Quellen mit Titel, Domain und URL. Erfinde keine Links und nutze nur die angegebenen URLs.' }] },
-        { role: 'user', content: [{ type: 'input_text', text: `Frage des Nutzers:\n${question}\n\nLokale Browser-Erinnerungen und aktuelle sichere Seite:\n${context}` }] }
-      ]
-    });
+  if (req.user.stripe_customer_id) {
+    sessionConfig.customer = req.user.stripe_customer_id;
+  } else {
+    sessionConfig.customer_email = req.user.email;
+  }
 
-    const nextUsage = await incrementUsage(identity.userId, identity.plan);
-    res.json({ ok: true, answer: response.output_text || 'Ich konnte keine Antwort erzeugen.', usage: publicUsage(nextUsage) });
+  const session = await stripe.checkout.sessions.create(sessionConfig);
+  res.json({ ok: true, url: session.url });
+});
+
+app.get('/api/stripe/webhook', (_req, res) => {
+  res.json({ ok: true, message: 'Stripe webhook endpoint bereit. Stripe sendet hier per POST.' });
+});
+
+app.listen(port, () => console.log(`Remy backend läuft auf Port ${port}`));
+
+
+async function handleStripeWebhook(req, res) {
+  if (!stripe) return res.status(500).send('Stripe ist nicht eingerichtet.');
+
+  let event;
+  try {
+    const signature = req.headers['stripe-signature'];
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+    if (webhookSecret) {
+      event = stripe.webhooks.constructEvent(req.body, signature, webhookSecret);
+    } else {
+      // Nur als Entwickler-Fallback. Für Produktion sollte STRIPE_WEBHOOK_SECRET gesetzt sein.
+      event = JSON.parse(req.body.toString('utf8'));
+    }
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Remy konnte gerade keine KI-Antwort erzeugen. Bitte versuche es gleich nochmal.' });
+    console.error('Stripe Webhook Signatur/Parsing fehlgeschlagen:', error.message);
+    return res.status(400).send(`Webhook Error: ${error.message}`);
   }
-});
 
-app.listen(port, () => {
-  console.log(`Remy backend läuft auf Port ${port}`);
-  console.log(hasKey ? `OpenAI Modell: ${model}` : 'OPENAI_API_KEY fehlt noch. Trage ihn in .env ein.');
-  console.log(`Free: ${freeLimit} Fragen/Monat · Plus: ${plusLimit} Fragen/Monat · ${plusPrice}`);
-  if (authSecret === 'dev-secret-change-me') console.log('Hinweis: Setze AUTH_SECRET in Render für echte Nutzung.');
-});
-
-function rateLimitMiddleware(req, res, next) {
-  const now = Date.now();
-  const key = `${req.ip || 'ip'}:${getRawUserId(req)}`;
-  const windowMs = 60 * 1000;
-  const maxPerMinute = Number(process.env.RATE_LIMIT_PER_MINUTE || 12);
-  const bucket = rateBuckets.get(key) || { start: now, count: 0 };
-  if (now - bucket.start > windowMs) { bucket.start = now; bucket.count = 0; }
-  bucket.count += 1;
-  rateBuckets.set(key, bucket);
-  if (bucket.count > maxPerMinute) return res.status(429).json({ error: 'Zu viele Anfragen in kurzer Zeit. Bitte warte einen Moment.' });
-  next();
-}
-
-async function getIdentity(req) {
-  const tokenUser = await getUserFromAuthHeader(req);
-  if (tokenUser) return { user: tokenUser, userId: tokenUser.id, plan: tokenUser.plan || 'free' };
-  return { user: null, userId: getRawUserId(req), plan: 'free' };
-}
-function getRawUserId(req) { return String(req.get('X-Omni-User-Id') || req.body?.userId || 'local-user').replace(/[^a-zA-Z0-9._:-]/g, '').slice(0, 120) || 'local-user'; }
-async function getUserFromAuthHeader(req) {
-  const header = String(req.get('Authorization') || '');
-  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
-  if (!token) return null;
-  const payload = verifyToken(token);
-  if (!payload?.sub) return null;
-  const store = await readUsersStore();
-  const email = store.usersById[payload.sub];
-  return email ? store.usersByEmail[email] || null : null;
-}
-function signToken(payload) {
-  const full = { ...payload, exp: Date.now() + 1000 * 60 * 60 * 24 * 30 };
-  const body = base64url(JSON.stringify(full));
-  const sig = crypto.createHmac('sha256', authSecret).update(body).digest('base64url');
-  return `${body}.${sig}`;
-}
-function verifyToken(token) {
-  const [body, sig] = String(token).split('.');
-  if (!body || !sig) return null;
-  const expected = crypto.createHmac('sha256', authSecret).update(body).digest('base64url');
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
-  try { const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')); return payload.exp > Date.now() ? payload : null; } catch { return null; }
-}
-function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString('base64url');
-  const hash = crypto.pbkdf2Sync(password, salt, 120000, 32, 'sha256').toString('base64url');
-  return { passwordSalt: salt, passwordHash: hash };
-}
-function verifyPassword(password, user) {
-  if (!user?.passwordSalt || !user?.passwordHash) return false;
-  const hash = crypto.pbkdf2Sync(String(password || ''), user.passwordSalt, 120000, 32, 'sha256').toString('base64url');
-  const a = Buffer.from(hash);
-  const b = Buffer.from(user.passwordHash);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
-function normalizeEmail(email) { const clean = String(email || '').trim().toLowerCase(); return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean) ? clean : ''; }
-async function readUsersStore() { try { const store = JSON.parse(await fs.readFile(usersFile, 'utf8')); return { usersByEmail: store.usersByEmail || {}, usersById: store.usersById || {} }; } catch { return { usersByEmail: {}, usersById: {} }; } }
-async function writeUsersStore(store) { await fs.mkdir(dataDir, { recursive: true }); await fs.writeFile(usersFile, JSON.stringify(store, null, 2)); }
-async function handleStripeEvent(event) {
-  switch (event.type) {
-    case 'checkout.session.completed': {
+  try {
+    if (event.type === 'checkout.session.completed') {
       const session = event.data.object;
-      const userId = session.client_reference_id || session.metadata?.remyUserId;
-      if (!userId) return;
-      await setUserPlanById(userId, 'plus', {
-        stripeCustomerId: typeof session.customer === 'string' ? session.customer : session.customer?.id,
-        stripeSubscriptionId: typeof session.subscription === 'string' ? session.subscription : session.subscription?.id,
-        lastStripeEvent: event.type
+      const userId = session.metadata?.remy_user_id || session.client_reference_id || session.subscription_data?.metadata?.remy_user_id;
+      if (!userId) {
+        console.warn('Stripe checkout.session.completed ohne remy_user_id:', session.id);
+        return res.json({ received: true, ignored: true, reason: 'missing_remy_user_id' });
+      }
+
+      await updateUserBilling(userId, {
+        plan: 'plus',
+        stripe_customer_id: typeof session.customer === 'string' ? session.customer : session.customer?.id,
+        stripe_subscription_id: typeof session.subscription === 'string' ? session.subscription : session.subscription?.id,
       });
-      break;
+      return res.json({ received: true, plan: 'plus', userId });
     }
-    case 'customer.subscription.updated':
-    case 'customer.subscription.deleted': {
+
+    if (event.type === 'invoice.payment_succeeded') {
+      const invoice = event.data.object;
+      const customerId = typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id;
+      if (customerId) await updateUserByStripeCustomer(customerId, { plan: 'plus' });
+      return res.json({ received: true });
+    }
+
+    if (event.type === 'customer.subscription.deleted') {
       const subscription = event.data.object;
-      const userId = subscription.metadata?.remyUserId || await findUserIdByStripeCustomer(subscription.customer);
-      if (!userId) return;
-      const activeStatuses = new Set(['active', 'trialing']);
-      await setUserPlanById(userId, activeStatuses.has(subscription.status) ? 'plus' : 'free', {
-        stripeCustomerId: typeof subscription.customer === 'string' ? subscription.customer : subscription.customer?.id,
-        stripeSubscriptionId: subscription.id,
-        stripeSubscriptionStatus: subscription.status,
-        lastStripeEvent: event.type
-      });
-      break;
+      const userId = subscription.metadata?.remy_user_id;
+      const customerId = typeof subscription.customer === 'string' ? subscription.customer : subscription.customer?.id;
+      if (userId) await updateUserBilling(userId, { plan: 'free' });
+      else if (customerId) await updateUserByStripeCustomer(customerId, { plan: 'free' });
+      return res.json({ received: true, plan: 'free' });
     }
-    case 'invoice.payment_succeeded': {
-      const invoice = event.data.object;
-      const userId = await findUserIdByStripeCustomer(invoice.customer);
-      if (userId) await setUserPlanById(userId, 'plus', { lastStripeEvent: event.type });
-      break;
+
+    if (event.type === 'customer.subscription.updated') {
+      const subscription = event.data.object;
+      const userId = subscription.metadata?.remy_user_id;
+      const customerId = typeof subscription.customer === 'string' ? subscription.customer : subscription.customer?.id;
+      const activeStatuses = new Set(['active', 'trialing', 'past_due']);
+      const plan = activeStatuses.has(subscription.status) ? 'plus' : 'free';
+      if (userId) await updateUserBilling(userId, { plan, stripe_customer_id: customerId, stripe_subscription_id: subscription.id });
+      else if (customerId) await updateUserByStripeCustomer(customerId, { plan });
+      return res.json({ received: true, plan });
     }
-    case 'invoice.payment_failed': {
-      const invoice = event.data.object;
-      const userId = await findUserIdByStripeCustomer(invoice.customer);
-      if (userId) await setUserPlanById(userId, 'free', { lastStripeEvent: event.type });
-      break;
+
+    if (event.type === 'invoice.payment_failed') {
+      console.warn('Stripe invoice.payment_failed empfangen:', event.data.object?.id);
+      return res.json({ received: true });
     }
-    default:
-      break;
+
+    res.json({ received: true, ignored: true, type: event.type });
+  } catch (error) {
+    console.error('Stripe Webhook Verarbeitung fehlgeschlagen:', error);
+    res.status(500).send(`Webhook processing failed: ${error.message}`);
   }
-}
-async function findUserIdByStripeCustomer(customerId) {
-  if (!customerId) return '';
-  const store = await readUsersStore();
-  for (const user of Object.values(store.usersByEmail)) {
-    if (user.stripeCustomerId === customerId) return user.id;
-  }
-  return '';
-}
-async function setUserPlanById(userId, plan, extra = {}) {
-  const store = await readUsersStore();
-  const email = store.usersById[userId];
-  if (!email || !store.usersByEmail[email]) return null;
-  const user = store.usersByEmail[email];
-  Object.assign(user, extra, { plan, updatedAt: new Date().toISOString() });
-  store.usersByEmail[email] = user;
-  await writeUsersStore(store);
-  const usageStore = await readUsageStore();
-  const usage = normalizeUsage(usageStore, user.id, plan);
-  usage.plan = plan;
-  usageStore.users[user.id] = usage;
-  await writeUsageStore(usageStore);
-  return user;
 }
 
-function publicUser(user) { return { id: user.id, email: user.email, plan: user.plan || 'free', createdAt: user.createdAt }; }
+function signToken(user) { return jwt.sign({ sub: user.id, email: user.email }, authSecret, { expiresIn: '90d' }); }
+async function requireUser(req, res, next) {
+  try {
+    const auth = req.get('Authorization') || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    if (!token) return res.status(401).json({ error: 'Bitte einloggen.' });
+    const payload = jwt.verify(token, authSecret);
+    const user = await findUserById(payload.sub);
+    if (!user) return res.status(401).json({ error: 'Konto nicht gefunden.' });
+    req.user = user; next();
+  } catch { res.status(401).json({ error: 'Login abgelaufen. Bitte erneut einloggen.' }); }
+}
+
 function currentMonth() { return new Date().toISOString().slice(0, 7); }
-async function readUsageStore() { try { return JSON.parse(await fs.readFile(usageFile, 'utf8')); } catch { return { users: {} }; } }
-async function writeUsageStore(store) { await fs.mkdir(dataDir, { recursive: true }); await fs.writeFile(usageFile, JSON.stringify(store, null, 2)); }
-function normalizeUsage(store, userId, plan = 'free') { const month = currentMonth(); const existing = store.users[userId] || { plan, month, used: 0 }; if (existing.month !== month) { existing.month = month; existing.used = 0; } existing.plan = plan || existing.plan || 'free'; existing.used = Number(existing.used || 0); store.users[userId] = existing; return existing; }
-async function getUsage(userId, plan = 'free') { const store = await readUsageStore(); const usage = normalizeUsage(store, userId, plan); await writeUsageStore(store); return usage; }
-async function incrementUsage(userId, plan = 'free') { const store = await readUsageStore(); const usage = normalizeUsage(store, userId, plan); usage.used = Number(usage.used || 0) + 1; store.users[userId] = usage; await writeUsageStore(store); return usage; }
-function publicUsage(usage) { const used = Number(usage.used || 0); const limit = usage.plan === 'plus' ? plusLimit : freeLimit; return { plan: usage.plan || 'free', used, limit, remaining: Math.max(0, limit - used), month: usage.month || currentMonth(), plusPrice, plusLimit, freeLimit }; }
+function currentWeek() {
+  const d = new Date();
+  const tmp = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const day = tmp.getUTCDay() || 7;
+  tmp.setUTCDate(tmp.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((tmp - yearStart) / 86400000) + 1) / 7);
+  return `${tmp.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+function usagePeriod(plan = 'free') { return plan === 'free' ? currentWeek() : currentMonth(); }
+function resetLabel(plan = 'free') { return plan === 'free' ? 'Woche' : 'Monat'; }
+function planLimit(plan) { return plan === 'lifetime' ? lifetimeLimit : plan === 'plus' ? plusLimit : freeLimit; }
+function displayPlan(plan = 'free') { return plan === 'lifetime' ? 'Remy Lifetime' : plan === 'plus' ? paidPlanName : 'Remy Free'; }
+function publicUsage(usage, plan = usage.plan, trialAvailable = false) { const limit = planLimit(plan); const used = Number(usage.used || 0); return { plan: plan || 'free', planName: displayPlan(plan), used, limit, remaining: Math.max(0, limit - used), period: usage.month || usagePeriod(plan), resetLabel: resetLabel(plan), plusPrice, trialAvailable: Boolean(trialAvailable) }; }
+function publicUser(user) { return { id: user.id, email: user.email, plan: user.plan || 'free' }; }
+function normalizeEmail(email) { return String(email || '').trim().toLowerCase(); }
+function safeId(v) { return String(v || '').replace(/[^a-zA-Z0-9._:-]/g, '').slice(0, 160); }
 function clip(value, max) { return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max); }
-function base64url(input) { return Buffer.from(input).toString('base64url'); }
+function rateLimitMiddleware(req, res, next) { const now = Date.now(); const key = `${req.ip || 'ip'}:${req.path}`; const b = rateBuckets.get(key) || { start: now, count: 0 }; if (now - b.start > 60000) { b.start = now; b.count = 0; } b.count++; rateBuckets.set(key, b); if (b.count > Number(process.env.RATE_LIMIT_PER_MINUTE || 80)) return res.status(429).json({ error: 'Zu viele Anfragen. Bitte kurz warten.' }); next(); }
+
+async function readStore() { try { return JSON.parse(await fs.readFile(storeFile, 'utf8')); } catch { return { users: {}, usage: {} }; } }
+async function writeStore(store) { await fs.mkdir(dataDir, { recursive: true }); await fs.writeFile(storeFile, JSON.stringify(store, null, 2)); }
+async function findUserByEmail(email) {
+  if (supabase) {
+    const { data, error } = await supabase.from('remy_users').select('*').eq('email', email).maybeSingle();
+    if (error) throw new Error(`Supabase Nutzerabfrage fehlgeschlagen: ${error.message}`);
+    return data || null;
+  }
+  const s = await readStore(); return Object.values(s.users).find(u => u.email === email) || null;
+}
+async function findUserById(id) {
+  if (supabase) {
+    const { data, error } = await supabase.from('remy_users').select('*').eq('id', id).maybeSingle();
+    if (error) throw new Error(`Supabase Nutzerabfrage fehlgeschlagen: ${error.message}`);
+    return data || null;
+  }
+  const s = await readStore(); return s.users[id] || null;
+}
+async function createUser(email, password_hash) {
+  const user = { id: crypto.randomUUID(), email, password_hash, plan: 'free', created_at: new Date().toISOString() };
+  if (supabase) {
+    const { data, error } = await supabase.from('remy_users').insert(user).select('*').single();
+    if (error) throw new Error(`Supabase Registrierung fehlgeschlagen: ${error.message}`);
+    return data;
+  }
+  const s = await readStore(); s.users[user.id] = user; await writeStore(s); return user;
+}
+async function deleteUser(id) {
+  if (supabase) {
+    let { error } = await supabase.from('remy_usage').delete().eq('user_id', id);
+    if (error) throw new Error(`Supabase Nutzung löschen fehlgeschlagen: ${error.message}`);
+    ({ error } = await supabase.from('remy_users').delete().eq('id', id));
+    if (error) throw new Error(`Supabase Konto löschen fehlgeschlagen: ${error.message}`);
+    return;
+  }
+  const s = await readStore(); delete s.users[id]; delete s.usage[id]; await writeStore(s);
+}
+
+async function hasFreeTrialAvailable(userId, plan = 'free') {
+  if (plan !== 'free') return false;
+  if (supabase) {
+    const { data, error } = await supabase.from('remy_free_trials').select('used').eq('user_id', userId).maybeSingle();
+    if (error) throw new Error(`Supabase Test-Anfrage laden fehlgeschlagen: ${error.message}`);
+    return !data?.used;
+  }
+  const s = await readStore();
+  s.freeTrials ||= {};
+  return !s.freeTrials[userId]?.used;
+}
+async function markFreeTrialUsed(userId) {
+  if (supabase) {
+    const { error } = await supabase.from('remy_free_trials').upsert({ user_id: userId, used: true, used_at: new Date().toISOString() }, { onConflict: 'user_id' });
+    if (error) throw new Error(`Supabase Test-Anfrage speichern fehlgeschlagen: ${error.message}`);
+    return;
+  }
+  const s = await readStore();
+  s.freeTrials ||= {};
+  s.freeTrials[userId] = { used: true, used_at: new Date().toISOString() };
+  await writeStore(s);
+}
+
+async function getUsage(userId, plan = 'free') {
+  const month = usagePeriod(plan);
+  if (supabase) {
+    const { data, error } = await supabase.from('remy_usage').select('*').eq('user_id', userId).eq('month', month).maybeSingle();
+    if (error) throw new Error(`Supabase Nutzung laden fehlgeschlagen: ${error.message}`);
+    if (data) return { ...data, plan };
+    const row = { user_id: userId, month, used: 0 };
+    const { data: created, error: insertError } = await supabase.from('remy_usage').insert(row).select('*').single();
+    if (insertError) {
+      // Falls zwei Fenster gleichzeitig anlegen, nochmal laden statt zurückzusetzen.
+      const { data: retry, error: retryError } = await supabase.from('remy_usage').select('*').eq('user_id', userId).eq('month', month).maybeSingle();
+      if (retryError || !retry) throw new Error(`Supabase Nutzung erstellen fehlgeschlagen: ${insertError.message}`);
+      return { ...retry, plan };
+    }
+    return { ...(created || row), plan };
+  }
+  const s = await readStore(); const key = `${userId}:${month}`; s.usage[key] ||= { user_id: userId, month, used: 0 }; await writeStore(s); return { ...s.usage[key], plan };
+}
+async function incrementUsage(userId, plan = 'free') {
+  const usage = await getUsage(userId, plan);
+  const nextUsed = Number(usage.used || 0) + 1;
+  if (supabase) {
+    const { data, error } = await supabase
+      .from('remy_usage')
+      .upsert({ user_id: userId, month: usage.month, used: nextUsed }, { onConflict: 'user_id,month' })
+      .select('*')
+      .single();
+    if (error) throw new Error(`Supabase Nutzung speichern fehlgeschlagen: ${error.message}`);
+    return { ...(data || { ...usage, used: nextUsed }), plan };
+  }
+  const s = await readStore(); s.usage[`${userId}:${usage.month}`] = { ...usage, used: nextUsed }; await writeStore(s); return { ...s.usage[`${userId}:${usage.month}`], plan };
+}
+
+
+async function updateUserBilling(userId, updates) {
+  const clean = {};
+  if (updates.plan) clean.plan = updates.plan;
+  if (updates.stripe_customer_id) clean.stripe_customer_id = updates.stripe_customer_id;
+  if (updates.stripe_subscription_id) clean.stripe_subscription_id = updates.stripe_subscription_id;
+  if (!Object.keys(clean).length) return null;
+
+  if (supabase) {
+    const { data, error } = await supabase.from('remy_users').update(clean).eq('id', userId).select('*').maybeSingle();
+    if (error) throw new Error(`Supabase Plan-Update fehlgeschlagen: ${error.message}`);
+    if (!data) console.warn('Kein Remy-Nutzer für Stripe-Update gefunden:', userId);
+    return data;
+  }
+
+  const s = await readStore();
+  if (s.users[userId]) s.users[userId] = { ...s.users[userId], ...clean };
+  await writeStore(s);
+  return s.users[userId] || null;
+}
+
+async function updateUserByStripeCustomer(customerId, updates) {
+  if (!customerId) return null;
+  if (supabase) {
+    const clean = { ...updates };
+    const { data, error } = await supabase.from('remy_users').update(clean).eq('stripe_customer_id', customerId).select('*').maybeSingle();
+    if (error) throw new Error(`Supabase Stripe-Customer-Update fehlgeschlagen: ${error.message}`);
+    if (!data) console.warn('Kein Remy-Nutzer für Stripe-Customer gefunden:', customerId);
+    return data;
+  }
+
+  const s = await readStore();
+  const user = Object.values(s.users).find(u => u.stripe_customer_id === customerId);
+  if (user) s.users[user.id] = { ...user, ...updates };
+  await writeStore(s);
+  return user || null;
+}
+
+
+function renderAuthPage(deviceId) {
+  return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Remy Login</title><style>
+  body{font-family:Inter,system-ui,sans-serif;background:linear-gradient(135deg,#fff7ed,#eef2ff);margin:0;min-height:100vh;display:grid;place-items:center;color:#1f2937}.card{width:min(440px,92vw);background:white;border-radius:28px;padding:28px;box-shadow:0 24px 70px #312e8133}.brand{display:flex;gap:12px;align-items:center}.logo-dot{width:54px;height:54px;border-radius:20px;background:#eef2ff;display:grid;place-items:center;overflow:hidden}.logo-dot img{width:48px;height:48px;object-fit:contain}h1{margin:18px 0 6px;font-size:28px}p{color:#6b7280;line-height:1.5}.tabs{display:flex;background:#f3f4f6;border-radius:16px;padding:4px;margin:20px 0}.tabs button{flex:1;border:0;border-radius:12px;padding:11px 8px;background:transparent;font-weight:800;cursor:pointer}.tabs button.active{background:white;box-shadow:0 6px 18px #0001}input{width:100%;box-sizing:border-box;border:1px solid #e5e7eb;border-radius:16px;padding:14px;margin:7px 0;font-size:15px}button.main{width:100%;border:0;border-radius:16px;background:#4f46e5;color:white;font-weight:900;padding:14px;margin-top:10px;cursor:pointer}.small-action{border:0;background:transparent;color:#4f46e5;font-weight:800;cursor:pointer;margin-top:12px}.msg{min-height:20px;margin-top:12px;font-size:14px;line-height:1.4}.ok{color:#059669}.err{color:#dc2626}.hidden{display:none!important}.hint{font-size:12px;color:#6b7280;margin-top:10px}
+  </style></head><body><main class="card"><div class="brand"><div class="logo-dot"><img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTI4IiBoZWlnaHQ9IjEyOCIgdmlld0JveD0iMCAwIDEyOCAxMjgiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPHJlY3Qgd2lkdGg9IjEyOCIgaGVpZ2h0PSIxMjgiIHJ4PSIzMCIgZmlsbD0iI0VFRjdGRiIvPgogIDxwYXRoIGQ9Ik0zMSAyNmMwLTggNi0xNCAxNC0xNGg0MGM4IDAgMTQgNiAxNCAxNHY2MmMwIDYtNyAxMC0xMiA2TDcwIDgyYy0zLTItNy0yLTEwIDBMNDMgOTRjLTUgNC0xMiAwLTEyLTZWMjZ6IiBmaWxsPSIjM0U3OEQ2Ii8+CiAgPHBhdGggZD0iTTc2IDEyaDljOCAwIDE0IDYgMTQgMTR2OEg4NGMtNCAwLTgtNC04LThWMTJ6IiBmaWxsPSIjODJEOENEIi8+CiAgPGNpcmNsZSBjeD0iNTIiIGN5PSI1MyIgcj0iNyIgZmlsbD0iI0ZGRkZGRiIvPgogIDxjaXJjbGUgY3g9Ijc4IiBjeT0iNTMiIHI9IjciIGZpbGw9IiNGRkZGRkYiLz4KICA8Y2lyY2xlIGN4PSI1NCIgY3k9IjU0IiByPSIzIiBmaWxsPSIjMjAzQTU3Ii8+CiAgPGNpcmNsZSBjeD0iNzYiIGN5PSI1NCIgcj0iMyIgZmlsbD0iIzIwM0E1NyIvPgogIDxwYXRoIGQ9Ik01NSA3MGM2IDYgMTUgNiAyMSAwIiBzdHJva2U9IiMyMDNBNTciIHN0cm9rZS13aWR0aD0iNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgPGNpcmNsZSBjeD0iNDAiIGN5PSI2NCIgcj0iNSIgZmlsbD0iI0Y3QjZBNiIgb3BhY2l0eT0iLjcyIi8+CiAgPGNpcmNsZSBjeD0iOTAiIGN5PSI2NCIgcj0iNSIgZmlsbD0iI0Y3QjZBNiIgb3BhY2l0eT0iLjcyIi8+Cjwvc3ZnPgo=" alt="Remy"></div><strong>Remy</strong></div><h1>Einloggen und Remy nutzen</h1><p>Deine Anfragen, dein Remy-Unlimited-Status und deine Remy-Daten bleiben deinem Konto zugeordnet.</p><div class="tabs"><button id="loginTab" class="active">Einloggen</button><button id="registerTab">Konto erstellen</button></div><input id="email" type="email" placeholder="E-Mail"><input id="password" type="password" placeholder="Passwort"><input id="password2" class="hidden" type="password" placeholder="Passwort wiederholen"><button id="submit" class="main">Einloggen</button><button id="forgot" class="small-action">Passwort vergessen?</button><div id="msg" class="msg"></div><div class="hint">Nach erfolgreichem Login kannst du dieses Fenster schließen und Remy öffnen.</div></main><script>
+  let mode='login';const d=${JSON.stringify(deviceId)};function q(id){return document.getElementById(id)}
+  function setMode(m){mode=m;q('loginTab').classList.toggle('active',m==='login');q('registerTab').classList.toggle('active',m==='register');q('password').classList.toggle('hidden',m==='reset');q('password2').classList.toggle('hidden',m!=='register');q('forgot').classList.toggle('hidden',m==='reset');q('submit').textContent=m==='login'?'Einloggen':m==='register'?'Konto erstellen':'Reset-Link anfordern';q('msg').textContent=''}
+  q('loginTab').onclick=()=>setMode('login');q('registerTab').onclick=()=>setMode('register');q('forgot').onclick=()=>setMode('reset');
+  q('submit').onclick=async()=>{q('msg').textContent='Bitte warten…';q('msg').className='msg';try{const email=q('email').value.trim();const password=q('password').value;let endpoint='/api/auth/login';let body={email,password,deviceId:d};if(mode==='register'){if(password!==q('password2').value)throw new Error('Die Passwörter stimmen nicht überein.');endpoint='/api/auth/register'}if(mode==='reset'){endpoint='/api/auth/request-password-reset';body={email}}const r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw new Error(data.error||'Fehler');q('msg').className='msg ok';q('msg').textContent=mode==='reset'?(data.message||'Wenn ein Konto existiert, erhältst du eine E-Mail.'):'Fertig. Du kannst dieses Fenster schließen und Remy öffnen.'}catch(e){q('msg').className='msg err';q('msg').textContent=e.message||'Login kann nicht abgeschlossen werden.'}};
+  </script></body></html>`;
+}

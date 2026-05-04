@@ -1,170 +1,37 @@
-<!doctype html>
-<html lang="de">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Remy</title>
-  <link rel="stylesheet" href="styles.css" />
-</head>
-<body>
-  <main class="app">
-    <section id="onboarding" class="onboarding-card hidden">
-      <div class="onboarding-logo"><img src="logo.svg" alt="" /></div>
-      <h1>Willkommen bei Remy.</h1>
-      <p>Remy merkt sich hilfreiche Webseiten lokal im Browser, damit du sie später wiederfindest.</p>
-      <div class="onboarding-privacy">
-        <strong>Du bestimmst, was Remy nicht merken darf.</strong>
-        <p>Banking, Zahlungen, E-Mail, Dating, erwachsene Inhalte, Medizin und Login-Seiten sind standardmäßig geschützt. Du kannst diese Regeln später jederzeit in den Einstellungen ändern.</p>
-      </div>
-      <ul>
-        <li>Du kannst Remy jederzeit pausieren.</li>
-        <li>Eigene Websites kannst du auf die Ignorierliste setzen.</li>
-        <li>Bei KI-Fragen werden nur relevante Ausschnitte verarbeitet.</li>
-      </ul>
-      <div class="onboarding-login">
-        <strong>Schon ein Konto?</strong>
-        <p>Du kannst dich direkt anmelden. Du kannst Remy aber auch erst ohne Login testen.</p>
-        <button id="onboardingLoginBtn" class="secondary-btn muted-btn">Einloggen oder Konto erstellen</button>
-      </div>
-      <div class="onboarding-actions">
-        <button id="startOnboarding" class="primary-btn">Automatisch merken aktivieren</button>
-        <button id="pauseOnboarding" class="secondary-btn muted-btn">Erstmal pausiert lassen</button>
-      </div>
-    </section>
+<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Remy</title><link rel="stylesheet" href="styles.css"></head><body><main class="app">
+  <header class="topbar"><div class="brand"><img src="logo.svg" class="logo" alt=""><div><strong>Remy</strong><span>dein Browser erinnert sich</span></div></div><button id="toggleAuto" class="switch"><span></span></button></header>
 
-    <header class="topbar">
-      <div class="brand">
-        <img src="logo.svg" alt="" class="logo" />
-        <div>
-          <strong>Remy</strong>
-          <span>dein Browser erinnert sich</span>
-        </div>
-      </div>
-      <button id="toggleAuto" class="switch" title="Remy ein-/ausschalten"><span></span></button>
-    </header>
+  <section id="loginGate" class="login-gate hidden"><img src="logo.svg" alt=""><h1>Bitte melde dich an.</h1><p>So bleiben deine Anfragen, dein Unlimited-Status und deine Remy-Daten deinem Konto zugeordnet.</p><button id="loginNow" class="primary-btn">Im Browser anmelden</button><small>Du wirst auf eine sichere Remy-Seite weitergeleitet.</small></section>
 
-    <section class="hero-card remy-hero">
-      <div class="mascot-mini" aria-hidden="true"><img src="logo.svg" alt="" /></div>
-      <div class="status-row">
-        <div class="status-line"><span class="pulse"></span><span id="autoStatus">Automatik aktiv</span></div>
-        <div id="aiStatus" class="ai-pill">KI prüft…</div>
-      </div>
-      <h1>Frag Remy, was du wiederfinden willst.</h1>
-      <p id="memoryCount">Ich sammle hilfreiche Seiten lokal im Browser.</p>
-    </section>
+  <section id="mainApp" class="hidden">
+    <section class="hero-card"><div class="status-row"><div class="status-line"><span class="pulse"></span><span id="autoStatus">Automatik aktiv</span></div><div id="aiStatus" class="ai-pill">KI prüft…</div></div><h1>Was suchst du wieder?</h1><p id="memoryCount">Remy merkt sich hilfreiche Seiten.</p></section>
 
-    <section class="usage-card">
-      <div class="usage-top">
-        <div>
-          <strong id="planName">Remy Free</strong>
-          <p id="usageText">10 kostenlose Fragen pro Monat.</p>
-        </div>
-        <div class="billing-actions"><button id="upgradeBtn" class="upgrade-btn">Upgrade</button><button id="manageBillingBtn" class="secondary-btn muted-btn hidden">Abo verwalten</button></div>
-      </div>
-      <div class="usage-bar"><span id="usageBar"></span></div>
-    </section>
+    <section id="tutorialCard" class="tutorial-card hidden"><div class="tutorial-head"><img src="logo.svg" alt=""><div><strong>Kurzer Start mit Remy</strong><p>Teste deine erste Anfrage kostenlos ohne Verlust.</p></div></div><div class="tutorial-steps"><div><b>1</b><span><strong>Browser suchen</strong> findet Tabs, Seiten und Recherchen, die Remy gemerkt hat.</span></div><div><b>2</b><span><strong>Allgemein fragen</strong> ist für normale KI-Anfragen ohne Browser-Erinnerungen.</span></div><div><b>3</b><span>In den Einstellungen bestimmst du, welche Seiten nie gemerkt werden.</span></div></div><button id="dismissTutorial" class="secondary-btn">Verstanden</button></section>
 
-    <section class="ask-card">
-      <label for="question">Was suchst du wieder?</label>
-      <div class="ask-box">
-        <textarea id="question" rows="2" placeholder="z. B. Was habe ich letzte Woche gesucht?"></textarea>
-        <button id="ask" aria-label="Frage stellen">↵</button>
-      </div>
-      <div class="chips">
-        <button class="chip" data-question="Was sehe ich gerade auf dieser Seite?">Aktuelle Seite</button>
-        <button class="chip" data-question="Was habe ich zuletzt recherchiert?">Letzte Recherche</button>
-      </div>
-      <div id="liveNotice" class="live-notice hidden"></div>
-      <div id="answer" class="answer"></div>
-    </section>
+    <section class="mode-card"><button id="modeLocal" class="mode-btn active">Browser suchen</button><button id="modePublic" class="mode-btn">Allgemein fragen</button><p id="modeHelp">Browser-Suche nutzt nur deine gespeicherten Seiten.</p></section>
 
-    <section class="settings-card">
-      <button id="toggleSettings" class="settings-toggle">Einstellungen</button>
-      <div id="settingsPanel" class="settings-panel hidden">
-        <div class="settings-tabs">
-          <button class="settings-tab active" data-tab="privacyTab">Nicht merken</button>
-          <button class="settings-tab" data-tab="accountTab">Konto</button>
-          <button class="settings-tab" data-tab="trustTab">Datenschutz</button>
-        </div>
+    <section class="usage-card"><div class="usage-top"><div><strong id="planName">Remy Free</strong><p id="usageText">7 kostenlose Anfragen pro Woche.</p></div><button id="upgradeBtn" class="upgrade-btn">Upgrade</button></div><div class="usage-bar"><span id="usageBar"></span></div></section>
 
-        <div id="privacyTab" class="settings-tab-content">
-          <div class="settings-block privacy-block">
-            <h3>Nicht merken</h3>
-            <p>Remy überspringt sensible Seiten automatisch. Du kannst Kategorien an- oder ausschalten.</p>
-            <label class="check-row"><input type="checkbox" data-category="banking" /> Banking & Finanzen</label>
-            <label class="check-row"><input type="checkbox" data-category="payments" /> Zahlungen & Checkout</label>
-            <label class="check-row"><input type="checkbox" data-category="email" /> E-Mail & Nachrichten</label>
-            <label class="check-row"><input type="checkbox" data-category="dating" /> Dating</label>
-            <label class="check-row"><input type="checkbox" data-category="adult" /> Erwachsene Inhalte</label>
-            <label class="check-row"><input type="checkbox" data-category="medical" /> Medizin & Gesundheit</label>
-            <label class="check-row"><input type="checkbox" data-category="logins" /> Logins & Account-Seiten</label>
-            <button id="blockCurrentSite" class="secondary-btn muted-btn">Diese Website nie merken</button>
-            <div class="ignored-list-wrap">
-              <strong>Ignorierte Websites</strong>
-              <div id="ignoredDomains" class="ignored-list"></div>
-            </div>
-          </div>
-        </div>
+    <section class="ask-card"><div class="ask-box"><textarea id="question" rows="2" placeholder="Frag Remy…"></textarea><button id="ask">↵</button></div><div id="liveNotice" class="live-notice hidden"></div><div id="answer" class="answer"></div></section>
 
-        <div id="accountTab" class="settings-tab-content hidden">
-          <div class="settings-block account-block">
-            <h3>Konto</h3>
-            <p id="accountStatus">Melde dich an, damit Remy deine Fragen deinem Konto zuordnen kann.</p>
-            <div id="authForm" class="auth-form">
-              <input id="authEmail" type="email" autocomplete="email" placeholder="E-Mail" />
-              <input id="authPassword" type="password" autocomplete="current-password" placeholder="Passwort, min. 8 Zeichen" />
-              <div class="auth-actions">
-                <button id="loginBtn" class="primary-btn">Einloggen</button>
-                <button id="registerBtn" class="secondary-btn muted-btn">Konto erstellen</button>
-              </div>
-              <small id="authHint">Deine gespeicherten Browser-Erinnerungen bleiben lokal. Das Konto wird für Limits und Plus gebraucht.</small>
-            </div>
-            <div id="accountBox" class="account-box hidden">
-              <strong id="accountEmail"></strong>
-              <span id="accountPlan"></span>
-              <button id="logoutBtn" class="secondary-btn muted-btn hidden">Abmelden</button>
-            </div>
-          </div>
-        </div>
+    <section class="settings-card"><button id="toggleSettings" class="settings-toggle">Einstellungen</button><div id="settingsPanel" class="settings-panel hidden"><div class="settings-tabs"><button class="settings-tab active" data-tab="accountTab">Konto</button><button class="settings-tab" data-tab="privacyTab">Nicht merken</button><button class="settings-tab" data-tab="trustTab">Datenschutz</button></div>
+      <div id="accountTab" class="settings-tab-content"><div class="settings-block"><h3>Konto</h3><p id="accountText">Angemeldet.</p><button id="manageSubscription" class="secondary-btn hidden">Abo verwalten</button><button id="logoutBtn" class="secondary-btn">Abmelden</button><button id="deleteAccount" class="danger-btn">Konto löschen</button></div></div>
+      <div id="privacyTab" class="settings-tab-content hidden"><div class="settings-block"><h3>Nicht merken</h3><label class="check-row"><input type="checkbox" data-category="banking"> Banking & Finanzen</label><label class="check-row"><input type="checkbox" data-category="payments"> Zahlungen & Checkout</label><label class="check-row"><input type="checkbox" data-category="email"> E-Mail & Nachrichten</label><label class="check-row"><input type="checkbox" data-category="dating"> Dating</label><label class="check-row"><input type="checkbox" data-category="adult"> Erwachsene Inhalte</label><label class="check-row"><input type="checkbox" data-category="medical"> Medizin & Gesundheit</label><label class="check-row"><input type="checkbox" data-category="logins"> Logins & Account-Seiten</label><button id="blockCurrentSite" class="secondary-btn muted-btn">Diese Website nie merken</button><div id="ignoredDomains" class="ignored-list"></div></div></div>
+      <div id="trustTab" class="settings-tab-content hidden"><div class="trust-list"><h3>Datenschutz</h3><p>Remy speichert hilfreiche Seiten und überspringt sensible Bereiche. Browser-Suchen nutzen deine Erinnerungen. Allgemeine Anfragen nutzen KI-Wissen ohne Browser-Erinnerungen.</p></div></div>
+    </div></section>
 
-        <div id="trustTab" class="settings-tab-content hidden">
-          <div class="trust-list">
-            <h3>Was Remy speichert</h3>
-            <p>Titel, Link, sichtbare Textausschnitte, Zeitpunkt und grobe Seitensprache.</p>
-            <h3>Was Remy nicht speichern soll</h3>
-            <p>Passwörter, Zahlungsdaten, Banking, Logins, gesperrte Websites und geschützte Kategorien.</p>
-            <h3>Wenn du eine KI-Frage stellst</h3>
-            <p>Nur passende Ausschnitte aus deinen lokalen Erinnerungen werden zur Antwort verarbeitet.</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section id="footerAccount" class="account-footer-card">
-      <div>
-        <strong id="footerEmail">Nicht angemeldet</strong>
-        <p id="footerPlan">Login für Plus & Limits</p>
-      </div>
-      <button id="footerLoginBtn" class="secondary-btn muted-btn">Einloggen</button>
-      <button id="footerLogoutBtn" class="secondary-btn muted-btn hidden">Abmelden</button>
-    </section>
-
-    <section class="nudge-card" id="nudgeCard">
-      <div class="nudge-icon"><img src="logo.svg" alt="" /></div>
-      <div>
-        <strong>Schon wieder vergessen?</strong>
-        <p>Frag Remy. Ich zeige dir Antwort und passende Links.</p>
-      </div>
-    </section>
-
-    <section class="memories-card">
-      <div class="section-head">
-        <h2>Gerade gemerkt</h2>
-        <button id="clearAll" class="tiny-danger">alle löschen</button>
-      </div>
-      <div id="memories" class="memories"></div>
-    </section>
-  </main>
-  <script src="popup.js"></script>
-</body>
-</html>
+    <section class="memories-card"><div class="section-head"><h2>Gemerkte Seiten</h2><button id="clearAll" class="tiny-danger">alle löschen</button></div><div id="memories" class="memories"></div></section>
+  </section>
+</main>
+<div id="deleteModal" class="remy-modal hidden" role="dialog" aria-modal="true" aria-labelledby="deleteTitle">
+  <div class="remy-modal-card">
+    <div class="modal-mascot"><img src="logo.svg" alt=""></div>
+    <h2 id="deleteTitle">Konto wirklich löschen?</h2>
+    <p>Dein Remy-Konto und deine gespeicherten Remy-Daten werden dauerhaft entfernt. Falls du Remy Unlimited nutzt, kündige dein Abo bitte zuerst.</p>
+    <div class="modal-actions">
+      <button id="cancelDelete" class="secondary-btn">Abbrechen</button>
+      <button id="confirmDelete" class="danger-btn compact-danger">Konto löschen</button>
+    </div>
+  </div>
+</div>
+<script src="popup.js"></script></body></html>
