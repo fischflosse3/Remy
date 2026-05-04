@@ -239,7 +239,7 @@ setInterval(() => {
   }
 }, 1000);
 
-// Remy Seiten-Popup mit direktem Chat
+// Remy Seiten-Popup mit Drei-Bubble-Launcher und direktem Chat
 (function initRemySideChat() {
   if (window.__remySideChatInstalled) return;
   window.__remySideChatInstalled = true;
@@ -249,16 +249,21 @@ setInterval(() => {
   root.id = 'remy-side-root';
   root.innerHTML = `
     <button id="remy-float-button" title="Remy öffnen"><img src="${chrome.runtime.getURL('logo.svg')}" alt="Remy"></button>
+    <div id="remy-action-menu" class="remy-action-menu hidden" aria-label="Remy Aktionen">
+      <button id="remy-open-local" class="remy-action-bubble remy-action-local">Browser<br>suchen</button>
+      <button id="remy-toggle-ignore" class="remy-action-bubble remy-action-ignore">Nie<br>merken</button>
+      <button id="remy-open-public" class="remy-action-bubble remy-action-public">Allgemein<br>fragen</button>
+    </div>
     <section id="remy-side-panel" class="remy-side-panel hidden" aria-label="Remy Chat">
       <header class="remy-side-header">
-        <div><img src="${chrome.runtime.getURL('logo.svg')}" alt=""><strong>Remy</strong><span id="remy-side-mode-label">Lokal</span></div>
+        <div><img src="${chrome.runtime.getURL('logo.svg')}" alt=""><strong>Remy</strong><span id="remy-side-mode-label">Browser</span></div>
         <button id="remy-side-clear" title="Chatinhalt löschen">Chat löschen</button><button id="remy-side-close">×</button>
       </header>
       <div class="remy-mode-pick">
-        <button id="remy-local-mode" class="active">Lokal fragen</button>
-        <button id="remy-public-mode">Öffentlich fragen</button>
+        <button id="remy-local-mode" class="active">Browser suchen</button>
+        <button id="remy-public-mode">Allgemein fragen</button>
       </div>
-      <p id="remy-mode-help" class="remy-mode-help">Lokal nutzt deine gespeicherten Erinnerungen und diese sichere Seite.</p>
+      <p id="remy-mode-help" class="remy-mode-help">Browser suchen nutzt deine gespeicherten Erinnerungen und sichere Tab-Infos.</p>
       <div id="remy-side-usage" class="remy-side-usage">Anfragen werden geladen…</div>
       <div id="remy-side-messages" class="remy-side-messages">
         <div class="remy-bubble remy-bot">Wähle einen Modus und frag direkt hier.</div>
@@ -276,18 +281,28 @@ setInterval(() => {
     #remy-float-button{width:62px;height:62px;border:0;border-radius:24px;background:linear-gradient(135deg,#fff7ed,#eef2ff);box-shadow:0 18px 45px rgba(79,70,229,.25);display:grid;place-items:center;cursor:pointer;padding:8px;transition:.18s transform,.18s box-shadow}
     #remy-float-button:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 22px 55px rgba(79,70,229,.33)}
     #remy-float-button img{width:46px;height:46px;object-fit:contain;display:block}
+    .remy-action-menu{position:absolute;right:6px;bottom:76px;width:190px;height:162px;pointer-events:none}.remy-action-menu.hidden{display:none}.remy-action-bubble{position:absolute;width:86px;height:62px;border:0;border-radius:22px;font-size:12px;line-height:1.1;font-weight:900;cursor:pointer;box-shadow:0 16px 40px rgba(31,41,55,.22);pointer-events:auto}.remy-action-local{right:0;bottom:90px;background:#ede9fe;color:#5b21b6}.remy-action-ignore{right:88px;bottom:58px;background:#fff7ed;color:#9a3412}.remy-action-public{right:104px;bottom:0;background:#ecfeff;color:#0e7490}.remy-action-bubble:hover{transform:translateY(-2px)}
     .remy-side-panel{position:absolute;right:0;bottom:76px;width:348px;max-height:min(650px,76vh);background:rgba(255,255,255,.97);backdrop-filter:blur(14px);border:1px solid rgba(124,58,237,.13);border-radius:28px;box-shadow:0 28px 90px rgba(31,41,55,.26);overflow:hidden;display:flex;flex-direction:column}.remy-side-panel.hidden{display:none}
     .remy-side-header{display:flex;align-items:center;justify-content:space-between;padding:14px 14px 10px}.remy-side-header>div{display:flex;align-items:center;gap:9px}.remy-side-header img{width:34px;height:34px}.remy-side-header strong{font-size:16px}.remy-side-header span{font-size:11px;font-weight:800;border-radius:999px;background:#ede9fe;color:#6d28d9;padding:4px 8px}.remy-side-header button{border:0;background:#f3f4f6;border-radius:12px;height:30px;cursor:pointer;color:#4b5563}.remy-side-header #remy-side-clear{width:auto;padding:0 10px;font-size:11px;font-weight:900}.remy-side-header #remy-side-close{width:30px;font-size:18px}
     .remy-mode-pick{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 14px}.remy-mode-pick button{border:1px solid #e5e7eb;background:#fff;border-radius:16px;padding:10px;font-weight:900;cursor:pointer;color:#374151}.remy-mode-pick button.active{background:#4f46e5;color:white;border-color:#4f46e5}.remy-mode-pick button#remy-public-mode.active{background:#0891b2;border-color:#0891b2}
     .remy-mode-help{font-size:12px;color:#6b7280;margin:10px 16px 6px;line-height:1.35}.remy-side-usage{font-size:12px;font-weight:800;color:#4b5563;background:#f9fafb;border-top:1px solid #f3f4f6;border-bottom:1px solid #f3f4f6;padding:9px 16px}
-    .remy-side-messages{padding:14px;overflow:auto;display:flex;flex-direction:column;gap:10px;min-height:160px}.remy-bubble{border-radius:18px;padding:11px 12px;line-height:1.42;font-size:13px;white-space:pre-wrap}.remy-bot{background:#f3f4f6}.remy-user{background:#4f46e5;color:white;align-self:flex-end;max-width:84%}.remy-bot.public{background:#ecfeff}.remy-bot.local{background:#f5f3ff}.remy-source{font-size:12px;border:1px solid #e5e7eb;border-radius:14px;padding:8px;margin-top:7px;background:white}.remy-source a{color:#4f46e5;font-weight:800;text-decoration:none}
+    .remy-side-messages{padding:14px;overflow:auto;display:flex;flex-direction:column;gap:10px;min-height:160px}.remy-bubble{border-radius:18px;padding:11px 12px;line-height:1.42;font-size:13px;white-space:pre-wrap}.remy-bot{background:#f3f4f6}.remy-user{background:#4f46e5;color:white;align-self:flex-end;max-width:84%}.remy-bot.public{background:#ecfeff}.remy-bot.local{background:#f5f3ff}.remy-source{font-size:12px;border:1px solid #e5e7eb;border-radius:14px;padding:8px;margin-top:7px;background:white}.remy-source a{color:#2563eb;font-weight:800;text-decoration:underline;text-underline-offset:2px;word-break:break-word}
     .remy-side-form{display:flex;gap:8px;padding:12px;border-top:1px solid #f3f4f6}.remy-side-form textarea{flex:1;border:1px solid #e5e7eb;border-radius:18px;padding:11px;resize:none;font:inherit;font-size:13px;outline:none}.remy-side-form textarea:focus{border-color:#a78bfa;box-shadow:0 0 0 4px #ede9fe}.remy-side-form button{width:44px;border:0;border-radius:17px;background:#111827;color:white;font-weight:900;cursor:pointer}`;
   document.documentElement.appendChild(style);
 
   const $r = (id) => root.querySelector(`#${id}`);
   let mode = 'local';
 
-  $r('remy-float-button').addEventListener('click', () => $r('remy-side-panel').classList.toggle('hidden'));
+  $r('remy-float-button').addEventListener('click', () => {
+    const panel = $r('remy-side-panel');
+    const menu = $r('remy-action-menu');
+    if (!panel.classList.contains('hidden')) { panel.classList.add('hidden'); menu.classList.add('hidden'); return; }
+    menu.classList.toggle('hidden');
+    refreshIgnoreLabel();
+  });
+  $r('remy-open-local').addEventListener('click', () => openChat('local'));
+  $r('remy-open-public').addEventListener('click', () => openChat('public'));
+  $r('remy-toggle-ignore').addEventListener('click', toggleIgnore);
   $r('remy-side-close').addEventListener('click', () => $r('remy-side-panel').classList.add('hidden'));
   $r('remy-side-clear').addEventListener('click', clearChat);
   $r('remy-local-mode').addEventListener('click', () => setMode('local', true));
@@ -295,13 +310,21 @@ setInterval(() => {
   $r('remy-side-form').addEventListener('submit', async (event) => { event.preventDefault(); await ask(); });
   $r('remy-side-input').addEventListener('keydown', async (event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); await ask(); } });
 
+  function openChat(nextMode) {
+    setMode(nextMode, false);
+    $r('remy-action-menu').classList.add('hidden');
+    $r('remy-side-panel').classList.remove('hidden');
+    refreshUsage();
+    $r('remy-side-input').focus();
+  }
+
   function setMode(next, focus = false) {
     mode = next === 'public' ? 'public' : 'local';
     chrome.runtime.sendMessage({ type: 'REMY_SET_MODE', mode }, () => {});
     $r('remy-local-mode').classList.toggle('active', mode === 'local');
     $r('remy-public-mode').classList.toggle('active', mode === 'public');
-    $r('remy-side-mode-label').textContent = mode === 'public' ? 'Öffentlich' : 'Lokal';
-    $r('remy-mode-help').textContent = mode === 'public' ? 'Öffentlich nutzt allgemeines KI-Wissen. Stelle hier keine privaten Daten rein.' : 'Lokal nutzt deine gespeicherten Erinnerungen und diese sichere Seite.';
+    $r('remy-side-mode-label').textContent = mode === 'public' ? 'Allgemein' : 'Browser';
+    $r('remy-mode-help').textContent = mode === 'public' ? 'Allgemein fragen nutzt KI-Wissen. Gib hier keine privaten Daten ein.' : 'Browser suchen nutzt deine gespeicherten Erinnerungen und sichere Tab-Infos.';
     if (focus) $r('remy-side-input').focus();
   }
 
@@ -318,6 +341,27 @@ setInterval(() => {
     if (!usage) return;
     const remaining = usage.remaining === null || usage.remaining === undefined ? usage.limit - usage.used : usage.remaining;
     $r('remy-side-usage').textContent = `${Math.max(0, remaining)} von ${usage.limit} Anfragen übrig · ${usage.plan === 'free' ? 'Free' : (usage.paidPlanName || 'Remy Unlimited')}`;
+  }
+
+  async function refreshUsage() {
+    chrome.runtime.sendMessage({ type: 'REMY_GET_AUTH' }, (response) => {
+      if (response?.usage) updateUsage(response.usage);
+    });
+  }
+
+  async function refreshIgnoreLabel() {
+    chrome.runtime.sendMessage({ type: 'REMY_GET_CURRENT_SITE_MEMORY_STATUS' }, (response) => {
+      if (!response?.ok) return;
+      $r('remy-toggle-ignore').innerHTML = response.ignored ? 'Wieder<br>merken' : 'Nie<br>merken';
+    });
+  }
+
+  async function toggleIgnore() {
+    chrome.runtime.sendMessage({ type: 'REMY_TOGGLE_CURRENT_SITE_MEMORY' }, (response) => {
+      if (!response?.ok) { alert(response?.error || 'Konnte Website nicht ändern.'); return; }
+      $r('remy-toggle-ignore').innerHTML = response.ignored ? 'Wieder<br>merken' : 'Nie<br>merken';
+      $r('remy-action-menu').classList.add('hidden');
+    });
   }
 
   async function clearChat() {
@@ -350,15 +394,14 @@ setInterval(() => {
         response.sources.slice(0, 3).forEach(source => {
           const box = document.createElement('div');
           box.className = 'remy-source';
-          const url = source.url || '#';
-          box.innerHTML = `<strong>${escapeHtml(source.title || source.domain || 'Quelle')}</strong><br><a href="${escapeAttr(url)}" target="_blank" rel="noreferrer">Öffnen</a>`;
+          const link = document.createElement('a');
+          link.href = source.url || '#';
+          link.textContent = source.url || source.title || 'Öffnen';
+          link.onclick = (event) => { event.preventDefault(); if (source.url) chrome.runtime.sendMessage({ type: 'REMY_OPEN_LINK_OR_TAB', url: source.url }); };
+          box.appendChild(link);
           loading.appendChild(box);
         });
       }
     });
   }
-
-  chrome.storage.local.get(['remy_mode', 'remy_usage_cache'], ({ remy_mode, remy_usage_cache }) => { setMode(remy_mode || 'local'); updateUsage(remy_usage_cache); });
-  function escapeHtml(v) { return String(v || '').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
-  function escapeAttr(v) { return escapeHtml(v).replaceAll('"','&quot;'); }
 })();

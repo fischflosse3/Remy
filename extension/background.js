@@ -56,6 +56,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === 'OMNI_SET_CATEGORY') return await setCategory(message.category, Boolean(message.value));
     if (message?.type === 'OMNI_REMOVE_IGNORED_DOMAIN') return await removeIgnoredDomain(message.domain);
     if (message?.type === 'OMNI_BLOCK_CURRENT_SITE') return await blockCurrentSite();
+    if (message?.type === 'REMY_GET_CURRENT_SITE_MEMORY_STATUS') return await getCurrentSiteMemoryStatus(sender.tab);
+    if (message?.type === 'REMY_TOGGLE_CURRENT_SITE_MEMORY') return await toggleCurrentSiteMemory(sender.tab);
     if (message?.type === 'OMNI_DELETE_PAGE') return await deletePage(message.id);
     if (message?.type === 'OMNI_CLEAR_ALL') { await storageSet({ omni_pages: [], omni_stats: { rememberedTotal: 0, lastNudgeAt: 0 } }); await updateBadge(0); return { ok: true }; }
     if (message?.type === 'REMY_START_LOGIN') return await startExternalLogin();
@@ -65,6 +67,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === 'REMY_SET_MODE') { await storageSet({ remy_mode: message.mode === 'public' ? 'public' : 'local' }); return { ok: true, mode: message.mode === 'public' ? 'public' : 'local' }; }
     if (message?.type === 'REMY_CLEAR_CHAT') return await clearChatHistory(message.mode);
     if (message?.type === 'REMY_SIDEBAR_ASK') return await askFromExtension(message.question, message.mode, sender.tab?.id);
+    if (message?.type === 'REMY_OPEN_LINK_OR_TAB') return await openLinkOrExistingTab(message.url);
     return { ok: false, error: 'Unbekannte Anfrage.' };
   };
   run().then(r => sendResponse({ ok: true, ...r })).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
@@ -109,6 +112,16 @@ async function askFromExtension(question, mode = 'local', tabId = null) {
   return { ok: true, answer, usage: data.usage, sources: safeMode === 'local' ? memories.slice(0, 5) : [] };
 }
 
+
+async function openLinkOrExistingTab(url) {
+  if (!url) return { ok: false };
+  const tabs = await chrome.tabs.query({});
+  const existing = tabs.find(t => t.url === url);
+  if (existing?.id) { await chrome.tabs.update(existing.id, { active: true }); if (existing.windowId) await chrome.windows.update(existing.windowId, { focused: true }); return { ok: true, reused: true }; }
+  await chrome.tabs.create({ url });
+  return { ok: true, reused: false };
+}
+
 async function clearChatHistory(mode = 'local') {
   const safeMode = mode === 'public' ? 'public' : 'local';
   const historyKey = safeMode === 'public' ? 'remy_chat_history_public' : 'remy_chat_history_local';
@@ -125,9 +138,13 @@ function normalizeChatHistory(value) {
 }
 
 async function getLivePage(tabId = null) { let tab; if (tabId) tab = { id: tabId }; else [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); if (!tab?.id) return { safe: false, reason: 'Keine aktive Seite.' }; let response; try { response = await chrome.tabs.sendMessage(tab.id, { type: 'OMNI_EXTRACT_NOW' }); } catch { return { safe: false, reason: 'Diese Seite ist noch nicht bereit.' }; } if (!response?.ok || !response.page) return { safe: false, reason: response?.error || 'Keine lesbaren Inhalte.' }; const { omni_settings } = await storageGet(['omni_settings']); const settings = mergeSettings(omni_settings); const skip = shouldSkipPage(response.page, settings); if (skip) return { safe: false, reason: humanSkipReason(skip) }; const page = cleanPage(response.page, { url: response.page.url, title: response.page.title }); await saveCleanPage(page, { allowRecentDuplicate: true }); return { safe: true, page }; }
-async function blockCurrentSite() { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); const d = tab?.url ? safeDomain(tab.url) : ''; if (!d) return { ok: false, error: 'Keine Website erkannt.' }; return addIgnoredDomain(d); }
-async function addIgnoredDomain(domain) { const clean = cleanDomain(domain); const { omni_settings } = await storageGet(['omni_settings']); const s = mergeSettings(omni_settings); s.ignoredDomains = [...new Set([...(s.ignoredDomains || []), clean])].filter(Boolean).sort(); await storageSet({ omni_settings: s }); return { ok: true, settings: s }; }
+async function blockCurrentSite() { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); const d = tab?.url ? safeDomain(tab.url) : ''; if (!d) return { ok: false, error: 'Keine Website erkannt.' }; return addIgnoredDomain(d, { deleteExisting: true }); }
+async function getCurrentSiteMemoryStatus(tab = null) { if (!tab?.url) [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); const domain = tab?.url ? safeDomain(tab.url) : ''; if (!domain) return { ok: false, ignored: false, domain: '' }; const { omni_settings } = await storageGet(['omni_settings']); const s = mergeSettings(omni_settings); return { ok: true, domain, ignored: isIgnoredDomain(domain, s) }; }
+async function toggleCurrentSiteMemory(tab = null) { if (!tab?.url) [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); const domain = tab?.url ? safeDomain(tab.url) : ''; if (!domain) return { ok: false, error: 'Keine Website erkannt.' }; const { omni_settings } = await storageGet(['omni_settings']); const s = mergeSettings(omni_settings); if (isIgnoredDomain(domain, s)) { const r = await removeIgnoredDomain(domain); return { ...r, domain, ignored: false, action: 'allowed' }; } const r = await addIgnoredDomain(domain, { deleteExisting: true }); return { ...r, domain, ignored: true, action: 'ignored' }; }
+async function addIgnoredDomain(domain, opts = {}) { const clean = cleanDomain(domain); const { omni_settings } = await storageGet(['omni_settings']); const s = mergeSettings(omni_settings); s.ignoredDomains = [...new Set([...(s.ignoredDomains || []), clean])].filter(Boolean).sort(); let pages; if (opts.deleteExisting) { const data = await storageGet(['omni_pages']); pages = (data.omni_pages || []).filter(p => !domainMatches(p.domain || safeDomain(p.url), clean)); await storageSet({ omni_pages: pages }); await updateBadge(pages.length); } await storageSet({ omni_settings: s }); return { ok: true, settings: s, pages }; }
 async function removeIgnoredDomain(domain) { const clean = cleanDomain(domain); const { omni_settings } = await storageGet(['omni_settings']); const s = mergeSettings(omni_settings); s.ignoredDomains = (s.ignoredDomains || []).filter(d => d !== clean); await storageSet({ omni_settings: s }); return { ok: true, settings: s }; }
+function isIgnoredDomain(domain, settings) { const clean = cleanDomain(domain); return (settings.ignoredDomains || []).some(d => domainMatches(clean, d)); }
+function domainMatches(domain, blocked) { const d = cleanDomain(domain); const b = cleanDomain(blocked); return Boolean(d && b && (d === b || d.endsWith(`.${b}`))); }
 async function setCategory(category, value) { const { omni_settings } = await storageGet(['omni_settings']); const s = mergeSettings(omni_settings); if (!s.blockedCategories[category] && !(category in CATEGORY_RULES)) return { ok: false }; s.blockedCategories[category] = value; await storageSet({ omni_settings: s }); return { ok: true, settings: s }; }
 async function setAutoRemember(value) { const { omni_settings } = await storageGet(['omni_settings']); const s = mergeSettings(omni_settings); s.autoRemember = value; await storageSet({ omni_settings: s }); await updateBadge(); return { ok: true, settings: s }; }
 async function setOnboardingSeen(value) { const { omni_settings } = await storageGet(['omni_settings']); const s = mergeSettings(omni_settings); s.hasSeenOnboarding = value; await storageSet({ omni_settings: s }); return { ok: true, settings: s }; }
