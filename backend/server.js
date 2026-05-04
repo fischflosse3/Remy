@@ -155,10 +155,10 @@ app.post('/api/ask', requireUser, async (req, res) => {
 
     const systemText = mode === 'public'
       ? 'Du bist Remy im Modus Allgemein fragen. Antworte hilfreich, klar und kurz auf Deutsch. Nutze den bisherigen Chatverlauf, damit Folgefragen im selben Thema bleiben. Du darfst allgemeines Wissen nutzen. Frage nicht nach privaten Browserdaten.'
-      : 'Du bist Remy im Modus Browser suchen. Antworte auf Deutsch, klar und knapp. Nutze den bisherigen Chatverlauf für Folgefragen, aber verwende als Faktenbasis nur die übergebenen Erinnerungen und die aktuelle sichere Seite. Erfinde keine Quellen. Wenn die Antwort nicht in den Quellen steht, sag ehrlich, dass du es in den gespeicherten Seiten nicht findest. Nenne passende Quellen mit Titel, Domain und URL.';
+      : 'Du bist Remy im Modus Browser suchen. Antworte auf Deutsch, klar und knapp. Nutze den bisherigen Chatverlauf für Folgefragen, aber verwende als Faktenbasis nur die übergebenen Erinnerungen und die aktuelle sichere Seite. Erfinde keine Quellen. Wenn die Antwort nicht in den Quellen steht, sag ehrlich, dass du es in den gespeicherten Seiten nicht findest. Nenne passende Quellen mit Titel, Domain und URL. Wenn eine Quelle als offener Tab markiert ist, erwähne klar, dass es ein aktuell offener Tab ist.';
     const context = mode === 'local' ? memories.map((m, i) => [
       `Quelle ${i + 1}:`, `Titel: ${clip(m.title, 180)}`, `Domain: ${clip(m.domain, 120)}`, `URL: ${clip(m.url, 400)}`,
-      `Gespeichert: ${clip(m.savedAt, 80)}`, m.platform ? `Plattform: ${clip(m.platform, 80)}` : '', m.searchQuery ? `Suchanfrage: ${clip(m.searchQuery, 160)}` : '',
+      `Gespeichert: ${clip(m.savedAt, 80)}`, m.platform ? `Plattform: ${clip(m.platform, 80)}` : '', m.sourceType ? `Quelle-Typ: ${clip(m.sourceType, 80)}` : '', m.searchQuery ? `Suchanfrage: ${clip(m.searchQuery, 160)}` : '',
       `Kurzfassung: ${clip(m.summary, 700)}`, `Textauszug: ${clip(m.text, 2500)}`
     ].filter(Boolean).join('\n')).join('\n\n---\n\n') : 'Keine lokalen Erinnerungen: öffentliche allgemeine Frage.';
 
