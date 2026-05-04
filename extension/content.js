@@ -250,9 +250,9 @@ setInterval(() => {
   root.innerHTML = `
     <button id="remy-float-button" title="Remy öffnen"><img src="${chrome.runtime.getURL('logo.svg')}" alt="Remy"></button>
     <div id="remy-action-menu" class="remy-action-menu hidden" aria-label="Remy Aktionen">
-      <button id="remy-open-local" class="remy-action-bubble remy-action-local">Browser<br>suchen</button>
+      <button id="remy-open-local" class="remy-action-bubble remy-action-local">Browser</button>
       <button id="remy-toggle-ignore" class="remy-action-bubble remy-action-ignore">Nie<br>merken</button>
-      <button id="remy-open-public" class="remy-action-bubble remy-action-public">Allgemein<br>fragen</button>
+      <button id="remy-open-public" class="remy-action-bubble remy-action-public">Allgemein</button>
     </div>
     <section id="remy-side-panel" class="remy-side-panel hidden" aria-label="Remy Chat">
       <header class="remy-side-header">
@@ -281,7 +281,7 @@ setInterval(() => {
     #remy-float-button{width:62px;height:62px;border:0;border-radius:24px;background:linear-gradient(135deg,#fff7ed,#eef2ff);box-shadow:0 18px 45px rgba(79,70,229,.25);display:grid;place-items:center;cursor:pointer;padding:8px;transition:.18s transform,.18s box-shadow}
     #remy-float-button:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 22px 55px rgba(79,70,229,.33)}
     #remy-float-button img{width:46px;height:46px;object-fit:contain;display:block}
-    .remy-action-menu{position:absolute;right:6px;bottom:76px;width:190px;height:162px;pointer-events:none}.remy-action-menu.hidden{display:none}.remy-action-bubble{position:absolute;width:86px;height:62px;border:0;border-radius:22px;font-size:12px;line-height:1.1;font-weight:900;cursor:pointer;box-shadow:0 16px 40px rgba(31,41,55,.22);pointer-events:auto}.remy-action-local{right:0;bottom:90px;background:#ede9fe;color:#5b21b6}.remy-action-ignore{right:88px;bottom:58px;background:#fff7ed;color:#9a3412}.remy-action-public{right:104px;bottom:0;background:#ecfeff;color:#0e7490}.remy-action-bubble:hover{transform:translateY(-2px)}
+    .remy-action-menu{position:absolute;right:6px;bottom:76px;width:176px;height:176px;pointer-events:none}.remy-action-menu.hidden{display:none}.remy-action-bubble{position:absolute;width:74px;height:74px;border:0;border-radius:999px;font-size:11px;line-height:1.05;font-weight:900;cursor:pointer;box-shadow:0 16px 40px rgba(31,41,55,.22);pointer-events:auto;display:grid;place-items:center;text-align:center}.remy-action-local{right:0;bottom:96px;background:#ede9fe;color:#5b21b6}.remy-action-ignore{right:70px;bottom:70px;background:#fff7ed;color:#9a3412}.remy-action-public{right:96px;bottom:0;background:#ecfeff;color:#0e7490}.remy-action-bubble:hover{transform:translateY(-2px) scale(1.04)}
     .remy-side-panel{position:absolute;right:0;bottom:76px;width:348px;max-height:min(650px,76vh);background:rgba(255,255,255,.97);backdrop-filter:blur(14px);border:1px solid rgba(124,58,237,.13);border-radius:28px;box-shadow:0 28px 90px rgba(31,41,55,.26);overflow:hidden;display:flex;flex-direction:column}.remy-side-panel.hidden{display:none}
     .remy-side-header{display:flex;align-items:center;justify-content:space-between;padding:14px 14px 10px}.remy-side-header>div{display:flex;align-items:center;gap:9px}.remy-side-header img{width:34px;height:34px}.remy-side-header strong{font-size:16px}.remy-side-header span{font-size:11px;font-weight:800;border-radius:999px;background:#ede9fe;color:#6d28d9;padding:4px 8px}.remy-side-header button{border:0;background:#f3f4f6;border-radius:12px;height:30px;cursor:pointer;color:#4b5563}.remy-side-header #remy-side-clear{width:auto;padding:0 10px;font-size:11px;font-weight:900}.remy-side-header #remy-side-close{width:30px;font-size:18px}
     .remy-mode-pick{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 14px}.remy-mode-pick button{border:1px solid #e5e7eb;background:#fff;border-radius:16px;padding:10px;font-weight:900;cursor:pointer;color:#374151}.remy-mode-pick button.active{background:#4f46e5;color:white;border-color:#4f46e5}.remy-mode-pick button#remy-public-mode.active{background:#0891b2;border-color:#0891b2}
