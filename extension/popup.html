@@ -1,37 +1,25 @@
 <!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Remy</title><link rel="stylesheet" href="styles.css"></head><body><main class="app">
   <header class="topbar"><div class="brand"><img src="logo.svg" class="logo" alt=""><div><strong>Remy</strong><span>dein Browser erinnert sich</span></div></div><button id="toggleAuto" class="switch"><span></span></button></header>
 
-  <section id="loginGate" class="login-gate hidden"><img src="logo.svg" alt=""><h1>Bitte melde dich an.</h1><p>So bleiben deine Anfragen, dein Unlimited-Status und deine Remy-Daten deinem Konto zugeordnet.</p><button id="loginNow" class="primary-btn">Im Browser anmelden</button><small>Du wirst auf eine sichere Remy-Seite weitergeleitet.</small></section>
+  <section id="loginGate" class="login-gate hidden"><img src="logo.svg" alt=""><h1>Bitte melde dich an.</h1><p>So bleiben dein Free-Limit, Plus-Status und deine Remy-Daten deinem Konto zugeordnet.</p><button id="loginNow" class="primary-btn">Im Browser anmelden</button><small>Du wirst auf eine sichere Remy-Seite weitergeleitet.</small></section>
 
   <section id="mainApp" class="hidden">
     <section class="hero-card"><div class="status-row"><div class="status-line"><span class="pulse"></span><span id="autoStatus">Automatik aktiv</span></div><div id="aiStatus" class="ai-pill">KI prüft…</div></div><h1>Was suchst du wieder?</h1><p id="memoryCount">Remy merkt sich hilfreiche Seiten.</p></section>
 
-    <section id="tutorialCard" class="tutorial-card hidden"><div class="tutorial-head"><img src="logo.svg" alt=""><div><strong>Kurzer Start mit Remy</strong><p>Teste deine erste Anfrage kostenlos ohne Verlust.</p></div></div><div class="tutorial-steps"><div><b>1</b><span><strong>Browser suchen</strong> findet Tabs, Seiten und Recherchen, die Remy gemerkt hat.</span></div><div><b>2</b><span><strong>Allgemein fragen</strong> ist für normale KI-Anfragen ohne Browser-Erinnerungen.</span></div><div><b>3</b><span>In den Einstellungen bestimmst du, welche Seiten nie gemerkt werden.</span></div></div><button id="dismissTutorial" class="secondary-btn">Verstanden</button></section>
+    <section class="mode-card"><button id="modeLocal" class="mode-btn active">Browser suchen</button><button id="modePublic" class="mode-btn">Allgemein fragen</button><p id="modeHelp">Browser suchen nutzt deine gespeicherten Browser-Erinnerungen.</p></section>
 
-    <section class="mode-card"><button id="modeLocal" class="mode-btn active">Browser suchen</button><button id="modePublic" class="mode-btn">Allgemein fragen</button><p id="modeHelp">Browser-Suche nutzt nur deine gespeicherten Seiten.</p></section>
+    <section class="chat-card"><div class="chat-actions"><button id="chatPicker" class="secondary-btn">Chat auswählen</button><button id="newChat" class="secondary-btn">Neuer Chat</button></div><div id="chatList" class="chat-list hidden"></div></section>
 
-    <section class="usage-card"><div class="usage-top"><div><strong id="planName">Remy Free</strong><p id="usageText">7 kostenlose Anfragen pro Woche.</p></div><button id="upgradeBtn" class="upgrade-btn">Upgrade</button></div><div class="usage-bar"><span id="usageBar"></span></div></section>
+    <section class="usage-card"><div class="usage-top"><div><strong id="planName">Remy Free</strong><p id="usageText">10 kostenlose Fragen pro Monat.</p></div><button id="upgradeBtn" class="upgrade-btn">Upgrade</button></div><div class="usage-bar"><span id="usageBar"></span></div></section>
 
     <section class="ask-card"><div class="ask-box"><textarea id="question" rows="2" placeholder="Frag Remy…"></textarea><button id="ask">↵</button></div><div id="liveNotice" class="live-notice hidden"></div><div id="answer" class="answer"></div></section>
 
     <section class="settings-card"><button id="toggleSettings" class="settings-toggle">Einstellungen</button><div id="settingsPanel" class="settings-panel hidden"><div class="settings-tabs"><button class="settings-tab active" data-tab="accountTab">Konto</button><button class="settings-tab" data-tab="privacyTab">Nicht merken</button><button class="settings-tab" data-tab="trustTab">Datenschutz</button></div>
       <div id="accountTab" class="settings-tab-content"><div class="settings-block"><h3>Konto</h3><p id="accountText">Angemeldet.</p><button id="manageSubscription" class="secondary-btn hidden">Abo verwalten</button><button id="logoutBtn" class="secondary-btn">Abmelden</button><button id="deleteAccount" class="danger-btn">Konto löschen</button></div></div>
       <div id="privacyTab" class="settings-tab-content hidden"><div class="settings-block"><h3>Nicht merken</h3><label class="check-row"><input type="checkbox" data-category="banking"> Banking & Finanzen</label><label class="check-row"><input type="checkbox" data-category="payments"> Zahlungen & Checkout</label><label class="check-row"><input type="checkbox" data-category="email"> E-Mail & Nachrichten</label><label class="check-row"><input type="checkbox" data-category="dating"> Dating</label><label class="check-row"><input type="checkbox" data-category="adult"> Erwachsene Inhalte</label><label class="check-row"><input type="checkbox" data-category="medical"> Medizin & Gesundheit</label><label class="check-row"><input type="checkbox" data-category="logins"> Logins & Account-Seiten</label><button id="blockCurrentSite" class="secondary-btn muted-btn">Diese Website nie merken</button><div id="ignoredDomains" class="ignored-list"></div></div></div>
-      <div id="trustTab" class="settings-tab-content hidden"><div class="trust-list"><h3>Datenschutz</h3><p>Remy speichert hilfreiche Seiten und überspringt sensible Bereiche. Browser-Suchen nutzen deine Erinnerungen. Allgemeine Anfragen nutzen KI-Wissen ohne Browser-Erinnerungen.</p></div></div>
+      <div id="trustTab" class="settings-tab-content hidden"><div class="trust-list"><h3>Datenschutz</h3><p>Remy speichert hilfreiche Seiten und überspringt sensible Bereiche. Lokale Fragen nutzen deine Erinnerungen. Öffentliche Fragen nutzen allgemeines KI-Wissen.</p></div></div>
     </div></section>
 
     <section class="memories-card"><div class="section-head"><h2>Gemerkte Seiten</h2><button id="clearAll" class="tiny-danger">alle löschen</button></div><div id="memories" class="memories"></div></section>
   </section>
-</main>
-<div id="deleteModal" class="remy-modal hidden" role="dialog" aria-modal="true" aria-labelledby="deleteTitle">
-  <div class="remy-modal-card">
-    <div class="modal-mascot"><img src="logo.svg" alt=""></div>
-    <h2 id="deleteTitle">Konto wirklich löschen?</h2>
-    <p>Dein Remy-Konto und deine gespeicherten Remy-Daten werden dauerhaft entfernt. Falls du Remy Unlimited nutzt, kündige dein Abo bitte zuerst.</p>
-    <div class="modal-actions">
-      <button id="cancelDelete" class="secondary-btn">Abbrechen</button>
-      <button id="confirmDelete" class="danger-btn compact-danger">Konto löschen</button>
-    </div>
-  </div>
-</div>
-<script src="popup.js"></script></body></html>
+</main><script src="popup.js"></script></body></html>
