@@ -6,13 +6,11 @@
   <section id="mainApp" class="hidden">
     <section class="hero-card"><div class="status-row"><div class="status-line"><span class="pulse"></span><span id="autoStatus">Automatik aktiv</span></div><div id="aiStatus" class="ai-pill">KI prüft…</div></div><h1>Was suchst du wieder?</h1><p id="memoryCount">Remy merkt sich hilfreiche Seiten.</p></section>
 
-    <section class="mode-card"><button id="modeLocal" class="mode-btn active">Browser suchen</button><button id="modePublic" class="mode-btn">Allgemein fragen</button><p id="modeHelp">Browser suchen nutzt deine gespeicherten Browser-Erinnerungen.</p></section>
+    <section class="mode-card"><button id="modeLocal" class="mode-btn active">Lokal</button><button id="modePublic" class="mode-btn">Öffentlich</button><p id="modeHelp">Lokal nutzt deine gespeicherten Browser-Erinnerungen.</p></section>
 
-    <section class="chat-card"><div class="chat-actions"><button id="chatPicker" class="secondary-btn">Chat auswählen</button><button id="newChat" class="secondary-btn">Neuer Chat</button></div><div id="chatList" class="chat-list hidden"></div></section>
+    <section class="usage-card"><div class="usage-top"><div><strong id="planName">Remy Free</strong><p id="usageText">10 kostenlose Fragen pro Monat.</p></div><button id="upgradeBtn" class="upgrade-btn">Upgrade</button></div><div class="usage-bar"><span id="usageBar"></span></div></section>
 
-    <section class="usage-card"><div class="usage-top"><div><strong id="planName">Remy Free</strong><p id="usageText">7 kostenlose Anfragen pro Woche.</p></div><button id="upgradeBtn" class="upgrade-btn">Upgrade</button></div><div class="usage-bar"><span id="usageBar"></span></div></section>
-
-    <section class="ask-card"><div class="ask-box"><textarea id="question" rows="2" placeholder="Frag Remy…"></textarea><button id="ask">↵</button></div><div id="liveNotice" class="live-notice hidden"></div><div id="answer" class="answer"></div></section>
+    <section class="ask-card"><div class="ask-box"><textarea id="question" rows="2" placeholder="Frag Remy…"></textarea><button id="ask">↵</button></div><button id="clearChat" class="clear-chat-btn">Chatinhalt löschen</button><div id="liveNotice" class="live-notice hidden"></div><div id="answer" class="answer"></div></section>
 
     <section class="settings-card"><button id="toggleSettings" class="settings-toggle">Einstellungen</button><div id="settingsPanel" class="settings-panel hidden"><div class="settings-tabs"><button class="settings-tab active" data-tab="accountTab">Konto</button><button class="settings-tab" data-tab="privacyTab">Nicht merken</button><button class="settings-tab" data-tab="trustTab">Datenschutz</button></div>
       <div id="accountTab" class="settings-tab-content"><div class="settings-block"><h3>Konto</h3><p id="accountText">Angemeldet.</p><button id="manageSubscription" class="secondary-btn hidden">Abo verwalten</button><button id="logoutBtn" class="secondary-btn">Abmelden</button><button id="deleteAccount" class="danger-btn">Konto löschen</button></div></div>

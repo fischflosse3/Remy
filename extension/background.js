@@ -11,7 +11,8 @@ const REMY_DEFAULTS = {
   omni_stats: { rememberedTotal: 0, lastNudgeAt: 0 },
   remy_auth: { token: null, user: null },
   remy_mode: 'local',
-  remy_chats: null
+  remy_chat_history_local: [],
+  remy_chat_history_public: []
 };
 const CATEGORY_RULES = {
   banking: ['bank','sparkasse','volksbank','ing.de','dkb.de','comdirect','n26.com','revolut','wise.com','broker','depot','konto','finanzen'],
@@ -32,7 +33,8 @@ chrome.runtime.onInstalled.addListener(async ({ reason }) => {
     omni_stats: current.omni_stats || REMY_DEFAULTS.omni_stats,
     remy_auth: current.remy_auth || REMY_DEFAULTS.remy_auth,
     remy_mode: current.remy_mode || 'local',
-    remy_chats: current.remy_chats || createInitialChats()
+    remy_chat_history_local: current.remy_chat_history_local || [],
+    remy_chat_history_public: current.remy_chat_history_public || []
   });
   await setupContextMenus();
   await updateBadge();
@@ -54,8 +56,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === 'OMNI_SET_CATEGORY') return await setCategory(message.category, Boolean(message.value));
     if (message?.type === 'OMNI_REMOVE_IGNORED_DOMAIN') return await removeIgnoredDomain(message.domain);
     if (message?.type === 'OMNI_BLOCK_CURRENT_SITE') return await blockCurrentSite();
-    if (message?.type === 'REMY_GET_SITE_BLOCK_STATE') return await getCurrentSiteBlockState(sender.tab);
-    if (message?.type === 'REMY_TOGGLE_CURRENT_SITE_MEMORY') return await toggleCurrentSiteMemory(sender.tab);
     if (message?.type === 'OMNI_DELETE_PAGE') return await deletePage(message.id);
     if (message?.type === 'OMNI_CLEAR_ALL') { await storageSet({ omni_pages: [], omni_stats: { rememberedTotal: 0, lastNudgeAt: 0 } }); await updateBadge(0); return { ok: true }; }
     if (message?.type === 'REMY_START_LOGIN') return await startExternalLogin();
@@ -63,12 +63,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === 'REMY_GET_AUTH') return await getAuthState();
     if (message?.type === 'REMY_LOGOUT') { await storageSet({ remy_auth: { token: null, user: null } }); return { ok: true }; }
     if (message?.type === 'REMY_SET_MODE') { await storageSet({ remy_mode: message.mode === 'public' ? 'public' : 'local' }); return { ok: true, mode: message.mode === 'public' ? 'public' : 'local' }; }
-    if (message?.type === 'REMY_GET_CHAT_STATE') return await getChatState(message.mode);
-    if (message?.type === 'REMY_NEW_CHAT') return await newChat(message.mode);
-    if (message?.type === 'REMY_SELECT_CHAT') return await selectChat(message.mode, message.chatId);
-    if (message?.type === 'REMY_DELETE_CHAT') return await deleteChat(message.mode, message.chatId);
-    if (message?.type === 'REMY_OPEN_TAB_SOURCE') return await openTabSource(message.tabId, message.windowId, message.url);
-    if (message?.type === 'REMY_SIDEBAR_ASK') return await askFromExtension(message.question, message.mode, sender.tab?.id, message.chatId);
+    if (message?.type === 'REMY_CLEAR_CHAT') return await clearChatHistory(message.mode);
+    if (message?.type === 'REMY_SIDEBAR_ASK') return await askFromExtension(message.question, message.mode, sender.tab?.id);
     return { ok: false, error: 'Unbekannte Anfrage.' };
   };
   run().then(r => sendResponse({ ok: true, ...r })).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
@@ -82,7 +78,7 @@ async function getAuthState() { await pollLogin(); const { remy_auth } = await s
 function authHeaders(token) { return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }; }
 function getBackendUrl() { return DEFAULT_BACKEND_URL; }
 
-async function askFromExtension(question, mode = 'local', tabId = null, chatId = null) {
+async function askFromExtension(question, mode = 'local', tabId = null) {
   const authState = await getAuthState();
   if (!authState.loggedIn) return { ok: false, loginRequired: true, error: 'Bitte melde dich an, um Remy zu nutzen.' };
   const safeMode = mode === 'public' ? 'public' : 'local';
@@ -90,174 +86,47 @@ async function askFromExtension(question, mode = 'local', tabId = null, chatId =
   if (safeMode === 'local') {
     const live = await getLivePage(tabId);
     const { omni_pages = [] } = await storageGet(['omni_pages']);
-    const openTabs = await getOpenTabMemories(question);
-    const localSources = [
-      ...(live?.safe ? [live.page] : []),
-      ...openTabs,
-      ...omni_pages
-    ];
-    const ranked = rankPages(question, localSources, 10);
+    const ranked = rankPages(question, live?.safe ? [live.page, ...omni_pages] : omni_pages, 8);
     memories = ranked.map(compactMemory);
-    if (!memories.length) return { ok: false, error: 'Ich habe noch keine passende lokale Erinnerung oder offenen Tab gefunden.' };
+    if (!memories.length) return { ok: false, error: 'Ich habe noch keine passende lokale Erinnerung. Öffne eine normale Seite und warte kurz.' };
   }
-  const chat = await ensureActiveChat(safeMode, chatId);
-  const history = chat.messages.slice(-10);
-  const res = await fetch(`${getBackendUrl()}/api/ask`, { method: 'POST', headers: authHeaders(authState.auth.token), body: JSON.stringify({ question, mode: safeMode, memories, history, language: 'de' }) });
+
+  const historyKey = safeMode === 'public' ? 'remy_chat_history_public' : 'remy_chat_history_local';
+  const stored = await storageGet([historyKey]);
+  const history = normalizeChatHistory(stored[historyKey]).slice(-10);
+
+  const res = await fetch(`${getBackendUrl()}/api/ask`, {
+    method: 'POST',
+    headers: authHeaders(authState.auth.token),
+    body: JSON.stringify({ question, mode: safeMode, memories, history, language: 'de' })
+  });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) return { ok: false, error: data.error || 'Remy konnte gerade nicht antworten.', usage: data.usage };
-  const answer = data.answer || 'Keine Antwort erhalten.';
-  await appendToChat(safeMode, chat.id, question, answer);
   if (data.usage) await storageSet({ remy_usage_cache: data.usage });
-  const chatState = await getChatState(safeMode);
-  return { ok: true, answer, usage: data.usage, sources: safeMode === 'local' ? memories.slice(0, 5) : [], chatId: chat.id, chats: chatState.chats, activeChatId: chatState.activeChatId };
+  const answer = data.answer || 'Ich konnte keine Antwort erzeugen.';
+  const nextHistory = [...history, { role: 'user', text: clip(question, 900) }, { role: 'assistant', text: clip(answer, 1600) }].slice(-12);
+  await storageSet({ [historyKey]: nextHistory });
+  return { ok: true, answer, usage: data.usage, sources: safeMode === 'local' ? memories.slice(0, 5) : [] };
 }
 
-
-function createChat(mode = 'local') {
-  const now = Date.now();
-  return { id: `${mode}-${now}-${Math.random().toString(16).slice(2)}`, mode, title: mode === 'public' ? 'Allgemeiner Chat' : 'Browser-Chat', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), messages: [] };
-}
-function createInitialChats() {
-  const local = createChat('local');
-  const pub = createChat('public');
-  return { active: { local: local.id, public: pub.id }, items: { [local.id]: local, [pub.id]: pub } };
-}
-async function loadChats() {
-  const { remy_chats } = await storageGet(['remy_chats']);
-  const chats = remy_chats && remy_chats.active && remy_chats.items ? remy_chats : createInitialChats();
-  let changed = false;
-  for (const mode of ['local','public']) {
-    const hasMode = Object.values(chats.items).some(c => c.mode === mode);
-    if (!hasMode) { const c = createChat(mode); chats.items[c.id] = c; chats.active[mode] = c.id; changed = true; }
-    if (!chats.items[chats.active[mode]] || chats.items[chats.active[mode]].mode !== mode) {
-      const first = Object.values(chats.items).find(c => c.mode === mode);
-      chats.active[mode] = first.id; changed = true;
-    }
-  }
-  if (changed) await storageSet({ remy_chats: chats });
-  return chats;
-}
-async function saveChats(chats) { await storageSet({ remy_chats: chats }); }
-async function ensureActiveChat(mode = 'local', chatId = null) {
+async function clearChatHistory(mode = 'local') {
   const safeMode = mode === 'public' ? 'public' : 'local';
-  const chats = await loadChats();
-  if (chatId && chats.items[chatId] && chats.items[chatId].mode === safeMode) chats.active[safeMode] = chatId;
-  let chat = chats.items[chats.active[safeMode]];
-  if (!chat || chat.mode !== safeMode) { chat = createChat(safeMode); chats.items[chat.id] = chat; chats.active[safeMode] = chat.id; }
-  await saveChats(chats);
-  return chat;
-}
-async function getChatState(mode = 'local') {
-  const safeMode = mode === 'public' ? 'public' : 'local';
-  const chats = await loadChats();
-  const list = Object.values(chats.items).filter(c => c.mode === safeMode).sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt))).map(c => ({ id: c.id, title: c.title || (safeMode === 'public' ? 'Allgemeiner Chat' : 'Browser-Chat'), mode: c.mode, updatedAt: c.updatedAt, count: c.messages?.length || 0 }));
-  return { ok: true, chats: list, activeChatId: chats.active[safeMode] };
-}
-async function newChat(mode = 'local') {
-  const safeMode = mode === 'public' ? 'public' : 'local';
-  const chats = await loadChats();
-  const chat = createChat(safeMode);
-  chats.items[chat.id] = chat;
-  chats.active[safeMode] = chat.id;
-  await saveChats(chats);
-  return await getChatState(safeMode);
-}
-async function selectChat(mode = 'local', chatId = '') {
-  const safeMode = mode === 'public' ? 'public' : 'local';
-  const chats = await loadChats();
-  if (chats.items[chatId] && chats.items[chatId].mode === safeMode) chats.active[safeMode] = chatId;
-  await saveChats(chats);
-  return await getChatState(safeMode);
+  const historyKey = safeMode === 'public' ? 'remy_chat_history_public' : 'remy_chat_history_local';
+  await storageSet({ [historyKey]: [] });
+  return { ok: true };
 }
 
-async function deleteChat(mode = 'local', chatId = '') {
-  const safeMode = mode === 'public' ? 'public' : 'local';
-  const chats = await loadChats();
-  const target = chats.items[chatId];
-  if (!target || target.mode !== safeMode) return await getChatState(safeMode);
-  delete chats.items[chatId];
-  const remaining = Object.values(chats.items).filter(c => c.mode === safeMode).sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt)));
-  if (!remaining.length) {
-    const fresh = createChat(safeMode);
-    chats.items[fresh.id] = fresh;
-    chats.active[safeMode] = fresh.id;
-  } else if (chats.active[safeMode] === chatId) {
-    chats.active[safeMode] = remaining[0].id;
-  }
-  await saveChats(chats);
-  return await getChatState(safeMode);
-}
-
-async function appendToChat(mode, chatId, question, answer) {
-  const safeMode = mode === 'public' ? 'public' : 'local';
-  const chats = await loadChats();
-  let chat = chats.items[chatId] || chats.items[chats.active[safeMode]];
-  if (!chat || chat.mode !== safeMode) chat = await ensureActiveChat(safeMode);
-  const now = new Date().toISOString();
-  chat.messages ||= [];
-  chat.messages.push({ role: 'user', content: String(question || '').slice(0, 1200), at: now });
-  chat.messages.push({ role: 'assistant', content: String(answer || '').slice(0, 1800), at: now });
-  chat.messages = chat.messages.slice(-24);
-  const firstWords = String(question || '').trim().split(/\s+/).slice(0, 7).join(' ');
-  if (!chat.title || /^(Browser-Chat|Allgemeiner Chat)$/.test(chat.title)) chat.title = firstWords || chat.title;
-  chat.updatedAt = now;
-  chats.items[chat.id] = chat;
-  chats.active[safeMode] = chat.id;
-  await saveChats(chats);
+function normalizeChatHistory(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map(item => ({ role: item?.role === 'assistant' ? 'assistant' : 'user', text: clip(item?.text || '', 1600) }))
+    .filter(item => item.text)
+    .slice(-12);
 }
 
 async function getLivePage(tabId = null) { let tab; if (tabId) tab = { id: tabId }; else [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); if (!tab?.id) return { safe: false, reason: 'Keine aktive Seite.' }; let response; try { response = await chrome.tabs.sendMessage(tab.id, { type: 'OMNI_EXTRACT_NOW' }); } catch { return { safe: false, reason: 'Diese Seite ist noch nicht bereit.' }; } if (!response?.ok || !response.page) return { safe: false, reason: response?.error || 'Keine lesbaren Inhalte.' }; const { omni_settings } = await storageGet(['omni_settings']); const settings = mergeSettings(omni_settings); const skip = shouldSkipPage(response.page, settings); if (skip) return { safe: false, reason: humanSkipReason(skip) }; const page = cleanPage(response.page, { url: response.page.url, title: response.page.title }); await saveCleanPage(page, { allowRecentDuplicate: true }); return { safe: true, page }; }
-async function getOpenTabMemories(question = '') {
-  const { omni_settings } = await storageGet(['omni_settings']);
-  const settings = mergeSettings(omni_settings);
-  let tabs = [];
-  try { tabs = await chrome.tabs.query({}); } catch { return []; }
-  const queryWords = getKeywords(question);
-  const tabPages = tabs
-    .filter(tab => tab?.url && /^https?:\/\//i.test(tab.url))
-    .map(tab => {
-      const domain = safeDomain(tab.url);
-      const page = {
-        id: `tab-${tab.id}`,
-        sourceType: 'open-tab',
-        title: clip(tab.title || 'Offener Tab', 180),
-        url: tab.url,
-        domain,
-        description: '',
-        headings: 'Offener Browser-Tab',
-        text: `Offener Tab im Browser. Titel: ${tab.title || ''}. URL: ${tab.url}. Domain: ${domain}.`,
-        summary: `Offener Tab: ${tab.title || domain || tab.url}`,
-        keywords: getKeywords(`${tab.title || ''} ${tab.url || ''}`),
-        searchQuery: extractSearchQuery(tab.url),
-        platform: 'open-tab',
-        media: { tabId: tab.id, windowId: tab.windowId, index: tab.index, active: Boolean(tab.active), pinned: Boolean(tab.pinned), favIconUrl: tab.favIconUrl || '' },
-        language: {},
-        savedAt: new Date().toISOString()
-      };
-      return shouldSkipPage(page, settings) ? null : page;
-    })
-    .filter(Boolean);
-  if (!queryWords.length) return tabPages.slice(0, 12);
-  return rankPages(question, tabPages, 12);
-}
-
-async function openTabSource(tabId, windowId, url = '') {
-  const id = Number(tabId);
-  try {
-    if (Number.isFinite(id) && id > 0) {
-      const tab = await chrome.tabs.get(id);
-      await chrome.windows.update(tab.windowId || Number(windowId), { focused: true });
-      await chrome.tabs.update(id, { active: true });
-      return { ok: true };
-    }
-  } catch {}
-  if (url && /^https?:\/\//i.test(url)) { await chrome.tabs.create({ url }); return { ok: true }; }
-  return { ok: false, error: 'Tab konnte nicht geöffnet werden.' };
-}
-async function blockCurrentSite() { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); const d = tab?.url ? safeDomain(tab.url) : ''; if (!d) return { ok: false, error: 'Keine Website erkannt.' }; return addIgnoredDomain(d, { deleteExisting: true }); }
-async function getCurrentSiteBlockState(tabFromSender = null) { const tab = tabFromSender?.url ? tabFromSender : (await chrome.tabs.query({ active: true, currentWindow: true }))[0]; const d = tab?.url ? safeDomain(tab.url) : ''; const { omni_settings } = await storageGet(['omni_settings']); const s = mergeSettings(omni_settings); const blocked = Boolean(d && (s.ignoredDomains || []).some(x => d === x || d.endsWith(`.${x}`))); return { ok: true, domain: d, blocked, settings: s }; }
-async function toggleCurrentSiteMemory(tabFromSender = null) { const tab = tabFromSender?.url ? tabFromSender : (await chrome.tabs.query({ active: true, currentWindow: true }))[0]; const d = tab?.url ? safeDomain(tab.url) : ''; if (!d) return { ok: false, error: 'Keine Website erkannt.' }; const state = await getCurrentSiteBlockState(tab); if (state.blocked) { const r = await removeIgnoredDomain(d); return { ...r, domain: d, blocked: false }; } const r = await addIgnoredDomain(d, { deleteExisting: true }); return { ...r, domain: d, blocked: true }; }
-async function addIgnoredDomain(domain, opts = {}) { const clean = cleanDomain(domain); const { omni_settings, omni_pages = [] } = await storageGet(['omni_settings','omni_pages']); const s = mergeSettings(omni_settings); s.ignoredDomains = [...new Set([...(s.ignoredDomains || []), clean])].filter(Boolean).sort(); const update = { omni_settings: s }; if (opts.deleteExisting) update.omni_pages = (omni_pages || []).filter(p => { const d = cleanDomain(p.domain || safeDomain(p.url || '')); return !(d === clean || d.endsWith(`.${clean}`)); }); await storageSet(update); if (opts.deleteExisting) await updateBadge(update.omni_pages.length); return { ok: true, settings: s, deletedExisting: Boolean(opts.deleteExisting) }; }
+async function blockCurrentSite() { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); const d = tab?.url ? safeDomain(tab.url) : ''; if (!d) return { ok: false, error: 'Keine Website erkannt.' }; return addIgnoredDomain(d); }
+async function addIgnoredDomain(domain) { const clean = cleanDomain(domain); const { omni_settings } = await storageGet(['omni_settings']); const s = mergeSettings(omni_settings); s.ignoredDomains = [...new Set([...(s.ignoredDomains || []), clean])].filter(Boolean).sort(); await storageSet({ omni_settings: s }); return { ok: true, settings: s }; }
 async function removeIgnoredDomain(domain) { const clean = cleanDomain(domain); const { omni_settings } = await storageGet(['omni_settings']); const s = mergeSettings(omni_settings); s.ignoredDomains = (s.ignoredDomains || []).filter(d => d !== clean); await storageSet({ omni_settings: s }); return { ok: true, settings: s }; }
 async function setCategory(category, value) { const { omni_settings } = await storageGet(['omni_settings']); const s = mergeSettings(omni_settings); if (!s.blockedCategories[category] && !(category in CATEGORY_RULES)) return { ok: false }; s.blockedCategories[category] = value; await storageSet({ omni_settings: s }); return { ok: true, settings: s }; }
 async function setAutoRemember(value) { const { omni_settings } = await storageGet(['omni_settings']); const s = mergeSettings(omni_settings); s.autoRemember = value; await storageSet({ omni_settings: s }); await updateBadge(); return { ok: true, settings: s }; }
@@ -270,9 +139,9 @@ function cleanPage(raw, tab = {}) { const url = raw.url || tab.url || ''; return
 function shouldSkipPage(page, settings) { if (!page?.url) return 'no_url'; const url = page.url.toLowerCase(); const domain = cleanDomain(page.domain || safeDomain(page.url)); if ((settings.ignoredDomains || []).some(d => domain === d || domain.endsWith(`.${d}`))) return 'ignored_domain'; if (page.hasPasswordField && settings.blockedCategories.logins) return 'password_page'; for (const [cat, words] of Object.entries(CATEGORY_RULES)) { if (settings.blockedCategories?.[cat] === false) continue; if (words.some(w => url.includes(w) || domain.includes(w))) return cat; } return ''; }
 function humanSkipReason(r) { return ({ banking:'Banking/Finanzen geschützt.', payments:'Zahlungsseite geschützt.', email:'E-Mail-Bereich geschützt.', dating:'Dating-Seite geschützt.', adult:'Erwachsene Inhalte geschützt.', medical:'Gesundheit/Medizin geschützt.', logins:'Login/Account geschützt.', password_page:'Passwortseite geschützt.', ignored_domain:'Website ist ignoriert.' }[r] || 'Diese Seite wird geschützt.'); }
 function rankPages(q, pages, limit) { const kws = getKeywords(q); return pages.map((p,i)=>({p,score:scorePage(p,kws,i)})).sort((a,b)=>b.score-a.score).slice(0,limit).map(x=>x.p); }
-function scorePage(p,kws,i){ const hay = `${p.title} ${p.domain} ${p.searchQuery} ${p.summary} ${p.text} ${p.url}`.toLowerCase(); let s = Math.max(0, 6 - i * .05); if (p.sourceType === 'open-tab') s += 2.5; kws.forEach(k=>{ if(hay.includes(k)) s += 4; if(String(p.title||'').toLowerCase().includes(k)) s += 7; if(String(p.url||'').toLowerCase().includes(k)) s += 4; }); return s; }
+function scorePage(p,kws,i){ const hay = `${p.title} ${p.domain} ${p.searchQuery} ${p.summary} ${p.text}`.toLowerCase(); let s = Math.max(0, 6 - i * .05); kws.forEach(k=>{ if(hay.includes(k)) s += 4; if(String(p.title||'').toLowerCase().includes(k)) s += 7; }); return s; }
 function getKeywords(t){ return [...new Set(String(t||'').toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu,' ').split(/\s+/).filter(w=>w.length>2&&!STOPWORDS.has(w)))].slice(0,24); }
-function compactMemory(p){ return { title:p.title, url:p.url, domain:p.domain, savedAt:p.savedAt, searchQuery:p.searchQuery, summary:p.summary, text:p.text, platform:p.platform, media:p.media, language:p.language, keywords:p.keywords, sourceType:p.sourceType || '' }; }
+function compactMemory(p){ return { title:p.title, url:p.url, domain:p.domain, savedAt:p.savedAt, searchQuery:p.searchQuery, summary:p.summary, text:p.text, platform:p.platform, media:p.media, language:p.language, keywords:p.keywords }; }
 function summarize(p){ const parts=[p.description,p.headings,p.text].filter(Boolean).join(' '); return clip(parts,260); }
 function keywords(p){ return getKeywords(`${p.title} ${p.description} ${p.headings} ${p.text}`).slice(0,18); }
 function extractSearchQuery(url){ try{ const u=new URL(url); return u.searchParams.get('q')||u.searchParams.get('query')||u.searchParams.get('search_query')||''; }catch{return ''} }

@@ -239,7 +239,7 @@ setInterval(() => {
   }
 }, 1000);
 
-// Remy Seiten-Popup unten rechts mit radialen Aktionen und direktem Chat
+// Remy Seiten-Popup mit direktem Chat
 (function initRemySideChat() {
   if (window.__remySideChatInstalled) return;
   window.__remySideChatInstalled = true;
@@ -249,22 +249,19 @@ setInterval(() => {
   root.id = 'remy-side-root';
   root.innerHTML = `
     <button id="remy-float-button" title="Remy öffnen"><img src="${chrome.runtime.getURL('logo.svg')}" alt="Remy"></button>
-    <div id="remy-radial-actions" class="remy-radial-actions hidden" aria-label="Remy Aktionen">
-      <button id="remy-action-local" class="remy-action bubble-local" type="button">Browser<br>suchen</button>
-      <button id="remy-action-public" class="remy-action bubble-public" type="button">Allgemein<br>fragen</button>
-      <button id="remy-action-ignore" class="remy-action bubble-ignore" type="button">Nie<br>merken</button>
-    </div>
     <section id="remy-side-panel" class="remy-side-panel hidden" aria-label="Remy Chat">
       <header class="remy-side-header">
-        <div><img src="${chrome.runtime.getURL('logo.svg')}" alt=""><strong>Remy</strong><span id="remy-side-mode-label">Browser suchen</span></div>
-        <button id="remy-side-close" type="button">×</button>
+        <div><img src="${chrome.runtime.getURL('logo.svg')}" alt=""><strong>Remy</strong><span id="remy-side-mode-label">Lokal</span></div>
+        <button id="remy-side-clear" title="Chatinhalt löschen">Chat löschen</button><button id="remy-side-close">×</button>
       </header>
-      <div class="remy-chat-tools"><button id="remy-chat-picker" type="button">Chat auswählen</button><button id="remy-new-chat" type="button">Neuer Chat</button></div>
-      <div id="remy-chat-list" class="remy-chat-list hidden"></div>
-      <p id="remy-mode-help" class="remy-mode-help">Browser suchen nutzt nur gespeicherte Seiten und diese sichere Seite.</p>
+      <div class="remy-mode-pick">
+        <button id="remy-local-mode" class="active">Lokal fragen</button>
+        <button id="remy-public-mode">Öffentlich fragen</button>
+      </div>
+      <p id="remy-mode-help" class="remy-mode-help">Lokal nutzt deine gespeicherten Erinnerungen und diese sichere Seite.</p>
       <div id="remy-side-usage" class="remy-side-usage">Anfragen werden geladen…</div>
       <div id="remy-side-messages" class="remy-side-messages">
-        <div class="remy-bubble remy-bot local">Frag Remy nach Seiten, Tabs oder Erinnerungen.</div>
+        <div class="remy-bubble remy-bot">Wähle einen Modus und frag direkt hier.</div>
       </div>
       <form id="remy-side-form" class="remy-side-form">
         <textarea id="remy-side-input" rows="2" placeholder="Was möchtest du wissen?"></textarea>
@@ -275,65 +272,37 @@ setInterval(() => {
 
   const style = document.createElement('style');
   style.textContent = `
-    #remy-side-root{position:fixed!important;z-index:2147483647!important;right:18px!important;bottom:18px!important;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important;color:#1f2937!important}
-    #remy-float-button{width:64px;height:64px;border:0;border-radius:25px;background:linear-gradient(135deg,#fff7ed,#eef2ff);box-shadow:0 18px 45px rgba(79,70,229,.25);display:grid;place-items:center;cursor:pointer;padding:8px;transition:.18s transform,.18s box-shadow;position:relative;z-index:4}
+    #remy-side-root{position:fixed!important;z-index:2147483647!important;right:18px!important;bottom:18px!important;top:auto!important;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important;color:#1f2937!important}
+    #remy-float-button{width:62px;height:62px;border:0;border-radius:24px;background:linear-gradient(135deg,#fff7ed,#eef2ff);box-shadow:0 18px 45px rgba(79,70,229,.25);display:grid;place-items:center;cursor:pointer;padding:8px;transition:.18s transform,.18s box-shadow}
     #remy-float-button:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 22px 55px rgba(79,70,229,.33)}
-    #remy-float-button img{width:48px;height:48px;object-fit:contain;display:block}
-    .remy-radial-actions{position:absolute;right:0;bottom:0;width:190px;height:190px;pointer-events:none}.remy-radial-actions.hidden{display:none}.remy-action{position:absolute;width:72px;height:72px;border:0;border-radius:24px;color:white;font-size:12px;line-height:1.1;font-weight:950;box-shadow:0 18px 42px rgba(31,41,55,.25);cursor:pointer;pointer-events:auto;transition:.16s transform}.remy-action:hover{transform:translateY(-2px) scale(1.04)}.bubble-local{right:0;bottom:92px;background:#4f46e5}.bubble-public{right:78px;bottom:78px;background:#0891b2}.bubble-ignore{right:92px;bottom:0;background:#111827}
-    .remy-side-panel{position:absolute;right:0;bottom:78px;width:348px;max-height:min(640px,calc(100vh - 118px));background:rgba(255,255,255,.98);backdrop-filter:blur(14px);border:1px solid rgba(124,58,237,.13);border-radius:28px;box-shadow:0 28px 90px rgba(31,41,55,.26);overflow:hidden;display:flex;flex-direction:column}.remy-side-panel.hidden{display:none}
-    .remy-side-header{display:flex;align-items:center;justify-content:space-between;padding:14px 14px 10px}.remy-side-header>div{display:flex;align-items:center;gap:9px}.remy-side-header img{width:34px;height:34px}.remy-side-header strong{font-size:16px}.remy-side-header span{font-size:11px;font-weight:900;border-radius:999px;background:#ede9fe;color:#6d28d9;padding:4px 8px}.remy-side-header span.public{background:#cffafe;color:#0e7490}.remy-side-header button{border:0;background:#f3f4f6;border-radius:12px;width:30px;height:30px;cursor:pointer;font-size:18px;color:#4b5563}
-    .remy-chat-tools{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 14px 8px}.remy-chat-tools button{border:0;border-radius:14px;background:#f9fafb;color:#4b5563;font-size:12px;font-weight:900;padding:9px;cursor:pointer}.remy-chat-list{margin:0 14px 8px;background:white;border:1px solid #e5e7eb;border-radius:16px;padding:6px;box-shadow:0 12px 28px #0001;max-height:178px;overflow:auto}.remy-chat-list.hidden{display:none}.remy-chat-option{width:100%;border:0;background:transparent;text-align:left;padding:9px 10px;border-radius:12px;cursor:pointer;font-size:12px;color:#374151;font-weight:800}.remy-chat-option.active{background:#ede9fe;color:#5b21b6}.remy-chat-row{display:flex;align-items:center;gap:6px;border-radius:12px}.remy-chat-row.active{background:#ede9fe}.remy-chat-row .remy-chat-option{flex:1}.remy-chat-delete{border:0;background:#fee2e2;color:#b91c1c;border-radius:10px;width:28px;height:28px;font-weight:900;cursor:pointer}.remy-mode-help{font-size:12px;color:#6b7280;margin:4px 16px 8px;line-height:1.35}.remy-side-usage{font-size:12px;font-weight:800;color:#4b5563;background:#f9fafb;border-top:1px solid #f3f4f6;border-bottom:1px solid #f3f4f6;padding:9px 16px}
-    .remy-side-messages{padding:14px;overflow:auto;display:flex;flex-direction:column;gap:10px;min-height:170px}.remy-bubble{border-radius:18px;padding:11px 12px;line-height:1.42;font-size:13px;white-space:pre-wrap}.remy-bot{background:#f3f4f6}.remy-user{background:#4f46e5;color:white;align-self:flex-end;max-width:84%}.remy-bot.public{background:#ecfeff}.remy-bot.local{background:#f5f3ff}.remy-source-links{display:flex;flex-direction:column;gap:6px;margin-top:8px}.remy-source-link{color:#2563eb!important;font-size:12px;font-weight:950;text-decoration:underline!important;word-break:break-word}.remy-source-link:hover{color:#1d4ed8!important}
-    .remy-side-form{display:flex;gap:8px;padding:12px;border-top:1px solid #f3f4f6;background:white}.remy-side-form textarea{flex:1;border:1px solid #e5e7eb;border-radius:18px;padding:11px;resize:none;font:inherit;font-size:13px;outline:none;max-height:92px}.remy-side-form textarea:focus{border-color:#a78bfa;box-shadow:0 0 0 4px #ede9fe}.remy-side-form button{width:44px;border:0;border-radius:17px;background:#111827;color:white;font-weight:900;cursor:pointer}`;
+    #remy-float-button img{width:46px;height:46px;object-fit:contain;display:block}
+    .remy-side-panel{position:absolute;right:0;bottom:76px;width:348px;max-height:min(650px,76vh);background:rgba(255,255,255,.97);backdrop-filter:blur(14px);border:1px solid rgba(124,58,237,.13);border-radius:28px;box-shadow:0 28px 90px rgba(31,41,55,.26);overflow:hidden;display:flex;flex-direction:column}.remy-side-panel.hidden{display:none}
+    .remy-side-header{display:flex;align-items:center;justify-content:space-between;padding:14px 14px 10px}.remy-side-header>div{display:flex;align-items:center;gap:9px}.remy-side-header img{width:34px;height:34px}.remy-side-header strong{font-size:16px}.remy-side-header span{font-size:11px;font-weight:800;border-radius:999px;background:#ede9fe;color:#6d28d9;padding:4px 8px}.remy-side-header button{border:0;background:#f3f4f6;border-radius:12px;height:30px;cursor:pointer;color:#4b5563}.remy-side-header #remy-side-clear{width:auto;padding:0 10px;font-size:11px;font-weight:900}.remy-side-header #remy-side-close{width:30px;font-size:18px}
+    .remy-mode-pick{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 14px}.remy-mode-pick button{border:1px solid #e5e7eb;background:#fff;border-radius:16px;padding:10px;font-weight:900;cursor:pointer;color:#374151}.remy-mode-pick button.active{background:#4f46e5;color:white;border-color:#4f46e5}.remy-mode-pick button#remy-public-mode.active{background:#0891b2;border-color:#0891b2}
+    .remy-mode-help{font-size:12px;color:#6b7280;margin:10px 16px 6px;line-height:1.35}.remy-side-usage{font-size:12px;font-weight:800;color:#4b5563;background:#f9fafb;border-top:1px solid #f3f4f6;border-bottom:1px solid #f3f4f6;padding:9px 16px}
+    .remy-side-messages{padding:14px;overflow:auto;display:flex;flex-direction:column;gap:10px;min-height:160px}.remy-bubble{border-radius:18px;padding:11px 12px;line-height:1.42;font-size:13px;white-space:pre-wrap}.remy-bot{background:#f3f4f6}.remy-user{background:#4f46e5;color:white;align-self:flex-end;max-width:84%}.remy-bot.public{background:#ecfeff}.remy-bot.local{background:#f5f3ff}.remy-source{font-size:12px;border:1px solid #e5e7eb;border-radius:14px;padding:8px;margin-top:7px;background:white}.remy-source a{color:#4f46e5;font-weight:800;text-decoration:none}
+    .remy-side-form{display:flex;gap:8px;padding:12px;border-top:1px solid #f3f4f6}.remy-side-form textarea{flex:1;border:1px solid #e5e7eb;border-radius:18px;padding:11px;resize:none;font:inherit;font-size:13px;outline:none}.remy-side-form textarea:focus{border-color:#a78bfa;box-shadow:0 0 0 4px #ede9fe}.remy-side-form button{width:44px;border:0;border-radius:17px;background:#111827;color:white;font-weight:900;cursor:pointer}`;
   document.documentElement.appendChild(style);
 
   const $r = (id) => root.querySelector(`#${id}`);
   let mode = 'local';
-  let activeChatId = null;
-  let chatState = { chats: [], activeChatId: null };
 
-  $r('remy-float-button').addEventListener('click', async () => {
-    if (!$r('remy-side-panel').classList.contains('hidden')) { closePanel(); return; }
-    await refreshBlockButton();
-    $r('remy-radial-actions').classList.toggle('hidden');
-  });
-  $r('remy-side-close').addEventListener('click', closePanel);
-  $r('remy-action-local').addEventListener('click', () => openChat('local'));
-  $r('remy-action-public').addEventListener('click', () => openChat('public'));
-  $r('remy-action-ignore').addEventListener('click', toggleCurrentSiteMemory);
-  $r('remy-chat-picker').addEventListener('click', async () => { await loadChats(); $r('remy-chat-list').classList.toggle('hidden'); });
-  $r('remy-new-chat').addEventListener('click', async () => { chrome.runtime.sendMessage({ type: 'REMY_NEW_CHAT', mode }, (r) => { if (r?.ok) { chatState = r; activeChatId = r.activeChatId; renderChatList(); resetChatWindow(); } }); });
+  $r('remy-float-button').addEventListener('click', () => $r('remy-side-panel').classList.toggle('hidden'));
+  $r('remy-side-close').addEventListener('click', () => $r('remy-side-panel').classList.add('hidden'));
+  $r('remy-side-clear').addEventListener('click', clearChat);
+  $r('remy-local-mode').addEventListener('click', () => setMode('local', true));
+  $r('remy-public-mode').addEventListener('click', () => setMode('public', true));
   $r('remy-side-form').addEventListener('submit', async (event) => { event.preventDefault(); await ask(); });
   $r('remy-side-input').addEventListener('keydown', async (event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); await ask(); } });
 
-  function closePanel() { $r('remy-side-panel').classList.add('hidden'); $r('remy-radial-actions').classList.add('hidden'); }
-  function openChat(nextMode) { setMode(nextMode || 'local', true); $r('remy-radial-actions').classList.add('hidden'); $r('remy-side-panel').classList.remove('hidden'); $r('remy-side-input').focus(); }
   function setMode(next, focus = false) {
     mode = next === 'public' ? 'public' : 'local';
     chrome.runtime.sendMessage({ type: 'REMY_SET_MODE', mode }, () => {});
-    const label = $r('remy-side-mode-label');
-    label.textContent = mode === 'public' ? 'Allgemein fragen' : 'Browser suchen';
-    label.classList.toggle('public', mode === 'public');
-    $r('remy-mode-help').textContent = mode === 'public' ? 'Allgemein fragen nutzt allgemeines KI-Wissen. Keine privaten Daten eingeben.' : 'Browser suchen nutzt nur gespeicherte Seiten und diese sichere Seite.';
-    loadChats();
+    $r('remy-local-mode').classList.toggle('active', mode === 'local');
+    $r('remy-public-mode').classList.toggle('active', mode === 'public');
+    $r('remy-side-mode-label').textContent = mode === 'public' ? 'Öffentlich' : 'Lokal';
+    $r('remy-mode-help').textContent = mode === 'public' ? 'Öffentlich nutzt allgemeines KI-Wissen. Stelle hier keine privaten Daten rein.' : 'Lokal nutzt deine gespeicherten Erinnerungen und diese sichere Seite.';
     if (focus) $r('remy-side-input').focus();
-  }
-
-  async function toggleCurrentSiteMemory() {
-    chrome.runtime.sendMessage({ type: 'REMY_TOGGLE_CURRENT_SITE_MEMORY' }, (r) => {
-      $r('remy-radial-actions').classList.add('hidden');
-      if (!r?.ok) return;
-      const text = r.blocked ? 'Diese Website wird nicht mehr gemerkt. Alte Erinnerungen wurden entfernt.' : 'Diese Website wird wieder gemerkt.';
-      openChat('local');
-      addBubble(text, 'bot');
-      refreshBlockButton();
-    });
-  }
-  async function refreshBlockButton() {
-    chrome.runtime.sendMessage({ type: 'REMY_GET_SITE_BLOCK_STATE' }, (r) => {
-      if (!r?.ok) return;
-      $r('remy-action-ignore').innerHTML = r.blocked ? 'Wieder<br>merken' : 'Nie<br>merken';
-    });
   }
 
   function addBubble(text, who = 'bot') {
@@ -344,11 +313,19 @@ setInterval(() => {
     $r('remy-side-messages').scrollTop = $r('remy-side-messages').scrollHeight;
     return div;
   }
+
   function updateUsage(usage) {
     if (!usage) return;
     const remaining = usage.remaining === null || usage.remaining === undefined ? usage.limit - usage.used : usage.remaining;
-    $r('remy-side-usage').textContent = `${Math.max(0, remaining)} von ${usage.limit} Anfragen übrig · ${usage.plan === 'free' ? 'Free' : (usage.plan === 'lifetime' ? 'Remy Lifetime' : 'Remy Unlimited')}`;
+    $r('remy-side-usage').textContent = `${Math.max(0, remaining)} von ${usage.limit} Anfragen übrig · ${usage.plan === 'free' ? 'Free' : (usage.paidPlanName || 'Remy Unlimited')}`;
   }
+
+  async function clearChat() {
+    await chrome.runtime.sendMessage({ type: 'REMY_CLEAR_CHAT', mode });
+    $r('remy-side-messages').innerHTML = '<div class="remy-bubble remy-bot">Chat gelöscht. Du kannst jetzt ein neues Thema starten.</div>';
+    $r('remy-side-input').focus();
+  }
+
   async function ask() {
     const input = $r('remy-side-input');
     const question = input.value.trim();
@@ -356,7 +333,7 @@ setInterval(() => {
     input.value = '';
     addBubble(question, 'user');
     const loading = addBubble('Remy denkt kurz…', 'bot');
-    chrome.runtime.sendMessage({ type: 'REMY_SIDEBAR_ASK', question, mode, chatId: activeChatId }, (response) => {
+    chrome.runtime.sendMessage({ type: 'REMY_SIDEBAR_ASK', question, mode }, (response) => {
       if (!response?.ok || response.loginRequired) {
         loading.textContent = response?.error || 'Bitte melde dich zuerst an.';
         const a = document.createElement('button');
@@ -369,63 +346,19 @@ setInterval(() => {
       }
       loading.textContent = response.answer || 'Keine Antwort erhalten.';
       updateUsage(response.usage);
-      if (response.activeChatId) activeChatId = response.activeChatId;
-      if (response.chats) { chatState = { chats: response.chats, activeChatId: response.activeChatId || activeChatId }; renderChatList(); }
       if (Array.isArray(response.sources) && response.sources.length) {
-        const links = document.createElement('div');
-        links.className = 'remy-source-links';
-        response.sources.slice(0, 5).forEach(source => {
-          const url = source.url || '';
-          const a = document.createElement('a');
-          a.className = 'remy-source-link';
-          a.href = url || '#';
-          a.textContent = source.sourceType === 'open-tab' ? `Offener Tab: ${source.title || source.domain || url}` : (source.title || source.domain || url || 'Quelle');
-          a.dataset.url = url;
-          a.dataset.tabId = source.media?.tabId || '';
-          a.dataset.windowId = source.media?.windowId || '';
-          a.onclick = (event) => {
-            event.preventDefault();
-            if (a.dataset.tabId) chrome.runtime.sendMessage({ type: 'REMY_OPEN_TAB_SOURCE', tabId: a.dataset.tabId, windowId: a.dataset.windowId, url });
-            else if (url) window.open(url, '_blank', 'noopener,noreferrer');
-          };
-          links.appendChild(a);
+        response.sources.slice(0, 3).forEach(source => {
+          const box = document.createElement('div');
+          box.className = 'remy-source';
+          const url = source.url || '#';
+          box.innerHTML = `<strong>${escapeHtml(source.title || source.domain || 'Quelle')}</strong><br><a href="${escapeAttr(url)}" target="_blank" rel="noreferrer">Öffnen</a>`;
+          loading.appendChild(box);
         });
-        loading.appendChild(links);
       }
     });
   }
-  function resetChatWindow() {
-    $r('remy-side-messages').innerHTML = `<div class="remy-bubble remy-bot ${mode}">Neuer Chat gestartet. Folgefragen bleiben jetzt in diesem Thema.</div>`;
-    $r('remy-side-input').focus();
-  }
-  async function loadChats() {
-    chrome.runtime.sendMessage({ type: 'REMY_GET_CHAT_STATE', mode }, (r) => {
-      if (!r?.ok) return;
-      chatState = r;
-      activeChatId = r.activeChatId;
-      renderChatList();
-    });
-  }
-  function renderChatList() {
-    const list = $r('remy-chat-list');
-    const chats = chatState.chats || [];
-    list.innerHTML = chats.length ? chats.slice(0, 6).map(c => `<div class="remy-chat-row ${c.id === activeChatId ? 'active' : ''}"><button type="button" class="remy-chat-option" data-id="${escapeAttr(c.id)}">${escapeHtml(c.title || (mode === 'public' ? 'Allgemeiner Chat' : 'Browser-Chat'))}</button><button type="button" class="remy-chat-delete" data-id="${escapeAttr(c.id)}" title="Chat löschen">×</button></div>`).join('') : '<div class="remy-chat-option">Noch kein Chat</div>';
-    list.querySelectorAll('.remy-chat-option[data-id]').forEach(btn => btn.onclick = () => {
-      const id = btn.dataset.id;
-      chrome.runtime.sendMessage({ type: 'REMY_SELECT_CHAT', mode, chatId: id }, (r) => {
-        if (r?.ok) { chatState = r; activeChatId = r.activeChatId; renderChatList(); $r('remy-chat-list').classList.add('hidden'); resetChatWindow(); }
-      });
-    });
-    list.querySelectorAll('.remy-chat-delete[data-id]').forEach(btn => btn.onclick = (event) => {
-      event.stopPropagation();
-      if (!confirm('Diesen Chat löschen?')) return;
-      chrome.runtime.sendMessage({ type: 'REMY_DELETE_CHAT', mode, chatId: btn.dataset.id }, (r) => {
-        if (r?.ok) { chatState = r; activeChatId = r.activeChatId; renderChatList(); resetChatWindow(); }
-      });
-    });
-  }
 
-  chrome.storage.local.get(['remy_mode', 'remy_usage_cache'], ({ remy_mode, remy_usage_cache }) => { setMode(remy_mode || 'local'); updateUsage(remy_usage_cache); loadChats(); refreshBlockButton(); });
+  chrome.storage.local.get(['remy_mode', 'remy_usage_cache'], ({ remy_mode, remy_usage_cache }) => { setMode(remy_mode || 'local'); updateUsage(remy_usage_cache); });
   function escapeHtml(v) { return String(v || '').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
   function escapeAttr(v) { return escapeHtml(v).replaceAll('"','&quot;'); }
 })();
