@@ -110,6 +110,20 @@ app.post('/api/auth/delete', requireUser, async (req, res) => {
 
 app.get('/api/usage', requireUser, async (req, res) => res.json({ ok: true, usage: publicUsage(await getUsage(req.user.id, req.user.plan), req.user.plan, await hasFreeTrialAvailable(req.user.id, req.user.plan)) }));
 
+function normalizeChatHistory(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(-8).map(item => {
+    const role = item?.role === 'assistant' || item?.who === 'bot' || item?.who === 'assistant' ? 'assistant' : 'user';
+    const text = clip(item?.content || item?.text || '', 700);
+    return text ? { role, text } : null;
+  }).filter(Boolean);
+}
+function renderChatHistory(history) {
+  if (!history.length) return 'Keine vorherigen Nachrichten in diesem Chat.';
+  return history.map((m, i) => `${i + 1}. ${m.role === 'assistant' ? 'Remy' : 'Nutzer'}: ${m.text}`).join('\n');
+}
+
+
 app.post('/api/ask', requireUser, async (req, res) => {
   try {
     if (!openai) return res.status(400).json({ error: 'Remy kann gerade nicht antworten. Der API-Key ist im Backend noch nicht eingerichtet.' });
@@ -120,13 +134,14 @@ app.post('/api/ask', requireUser, async (req, res) => {
 
     const question = clip(req.body?.question, 900);
     const mode = req.body?.mode === 'public' ? 'public' : 'local';
+    const chatHistory = normalizeChatHistory(req.body?.history);
     const memories = Array.isArray(req.body?.memories) ? req.body.memories.slice(0, 10) : [];
     if (!question) return res.status(400).json({ error: 'Anfrage fehlt.' });
     if (mode === 'local' && !memories.length) return res.status(400).json({ error: 'Keine Erinnerungen übergeben.' });
 
     const systemText = mode === 'public'
-      ? 'Du bist Remy im Modus Allgemein fragen. Antworte hilfreich, klar und kurz auf Deutsch. Nutze allgemeines Wissen. Nutze keine Browser-Erinnerungen und frage nicht nach privaten Browserdaten.'
-      : 'Du bist Remy im Modus Browser-Suche. Antworte auf Deutsch, klar und knapp. Nutze ausschließlich die übergebenen Browser-Erinnerungen und die sichere aktuelle Seite. Verwende kein allgemeines Wissen, wenn es nicht aus den Quellen hervorgeht. Wenn die Antwort nicht in den Erinnerungen steht, sage ehrlich, dass du es in den gespeicherten Seiten nicht findest. Erfinde keine Quellen. Nenne passende Quellen mit Titel, Domain und URL.';
+      ? 'Du bist Remy im Modus Allgemein fragen. Antworte hilfreich, klar und kurz auf Deutsch. Nutze allgemeines Wissen. Beziehe dich auf den bisherigen Chatverlauf, wenn die neue Anfrage eine Folgefrage ist. Nutze keine Browser-Erinnerungen und frage nicht nach privaten Browserdaten.'
+      : 'Du bist Remy im Modus Browser suchen. Antworte auf Deutsch, klar und knapp. Nutze ausschließlich die übergebenen Browser-Erinnerungen, die sichere aktuelle Seite und den bisherigen Chatverlauf. Verwende kein allgemeines Wissen, wenn es nicht aus den Quellen hervorgeht. Wenn eine Folgefrage gestellt wird, beziehe sie auf das vorherige Thema im Chat. Wenn die Antwort nicht in den Erinnerungen steht, sage ehrlich, dass du es in den gespeicherten Seiten nicht findest. Erfinde keine Quellen. Nenne passende Quellen mit Titel, Domain und URL.';
     const context = mode === 'local' ? memories.map((m, i) => [
       `Quelle ${i + 1}:`, `Titel: ${clip(m.title, 180)}`, `Domain: ${clip(m.domain, 120)}`, `URL: ${clip(m.url, 400)}`,
       `Gespeichert: ${clip(m.savedAt, 80)}`, m.platform ? `Plattform: ${clip(m.platform, 80)}` : '', m.searchQuery ? `Suchanfrage: ${clip(m.searchQuery, 160)}` : '',
@@ -135,7 +150,7 @@ app.post('/api/ask', requireUser, async (req, res) => {
 
     const response = await openai.responses.create({ model, input: [
       { role: 'system', content: [{ type: 'input_text', text: systemText }] },
-      { role: 'user', content: [{ type: 'input_text', text: `Modus: ${mode}\nAnfrage:\n${question}\n\nKontext:\n${context}` }] }
+      { role: 'user', content: [{ type: 'input_text', text: `Modus: ${mode}\nBisheriger Chatverlauf:\n${renderChatHistory(chatHistory)}\n\nNeue Anfrage:\n${question}\n\nKontext:\n${context}` }] }
     ]});
     let nextUsage;
     const trialAvailable = trialAvailableBefore;

@@ -62,7 +62,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === 'REMY_GET_AUTH') return await getAuthState();
     if (message?.type === 'REMY_LOGOUT') { await storageSet({ remy_auth: { token: null, user: null } }); return { ok: true }; }
     if (message?.type === 'REMY_SET_MODE') { await storageSet({ remy_mode: message.mode === 'public' ? 'public' : 'local' }); return { ok: true, mode: message.mode === 'public' ? 'public' : 'local' }; }
-    if (message?.type === 'REMY_SIDEBAR_ASK') return await askFromExtension(message.question, message.mode, sender.tab?.id);
+    if (message?.type === 'REMY_SIDEBAR_ASK') return await askFromExtension(message.question, message.mode, sender.tab?.id, message.history || []);
     return { ok: false, error: 'Unbekannte Anfrage.' };
   };
   run().then(r => sendResponse({ ok: true, ...r })).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
@@ -96,7 +96,7 @@ async function getAuthState() {
 function authHeaders(token) { return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }; }
 function getBackendUrl() { return DEFAULT_BACKEND_URL; }
 
-async function askFromExtension(question, mode = 'local', tabId = null) {
+async function askFromExtension(question, mode = 'local', tabId = null, history = []) {
   const authState = await getAuthState();
   if (!authState.loggedIn) return { ok: false, loginRequired: true, error: 'Bitte melde dich an, um Remy zu nutzen.' };
   const safeMode = mode === 'public' ? 'public' : 'local';
@@ -108,7 +108,7 @@ async function askFromExtension(question, mode = 'local', tabId = null) {
     memories = ranked.map(compactMemory);
     if (!memories.length) return { ok: false, error: 'Ich habe noch keine passende lokale Erinnerung. Öffne eine normale Seite und warte kurz.' };
   }
-  const res = await fetch(`${getBackendUrl()}/api/ask`, { method: 'POST', headers: authHeaders(authState.auth.token), body: JSON.stringify({ question, mode: safeMode, memories, language: 'de' }) });
+  const res = await fetch(`${getBackendUrl()}/api/ask`, { method: 'POST', headers: authHeaders(authState.auth.token), body: JSON.stringify({ question, mode: safeMode, memories, history, language: 'de' }) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) return { ok: false, error: data.error || 'Remy konnte gerade nicht antworten.', usage: data.usage };
   if (data.usage) await storageSet({ remy_usage_cache: data.usage });

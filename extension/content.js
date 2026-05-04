@@ -395,7 +395,8 @@ setInterval(() => {
     input.value = '';
     pushMessage('user', question, null, activeMode);
     const loadingIndex = pushMessage('bot', 'Remy denkt…', null, activeMode);
-    chrome.runtime.sendMessage({ type: 'REMY_SIDEBAR_ASK', question, mode: activeMode }, (response) => {
+    const history = histories[activeMode].slice(0, -1).slice(-8).map(item => ({ role: item.who === 'user' ? 'user' : 'assistant', content: item.text }));
+    chrome.runtime.sendMessage({ type: 'REMY_SIDEBAR_ASK', question, mode: activeMode, history }, (response) => {
       if (!response?.ok) {
         replaceBot(loadingIndex, response?.error || 'Remy konnte gerade nicht antworten.', null, activeMode);
         if (response?.usage) updateUsage(response.usage);
