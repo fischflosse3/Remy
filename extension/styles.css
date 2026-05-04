@@ -3,3 +3,32 @@
 .clear-chat-btn{margin-top:8px;border:0;background:#f3f4f6;color:#6b7280;border-radius:12px;padding:7px 10px;font-size:12px;font-weight:800;cursor:pointer}.clear-chat-btn:hover{background:#ede9fe;color:#6d28d9}.source-link{color:#2563eb!important;font-weight:800;text-decoration:underline;text-underline-offset:2px;word-break:break-word}.source-link:hover{color:#1d4ed8!important}
 
 .tutorial-card{background:rgba(255,255,255,.9);border:1px solid rgba(6,182,212,.16);border-radius:22px;padding:13px 14px;margin-bottom:12px;box-shadow:0 14px 40px rgba(31,41,55,.06)}.tutorial-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px}.tutorial-head strong{font-size:15px}.tutorial-head span{font-size:11px;font-weight:900;color:#0e7490;background:#ecfeff;border-radius:999px;padding:5px 8px}.tutorial-card p{margin:0;color:#4b5563;font-size:12.5px;line-height:1.42}.tutorial-steps{margin:0;padding-left:20px;color:#4b5563;font-size:12.5px;line-height:1.42}.tutorial-steps li{margin:0 0 6px}.tutorial-card .tutorial-note{margin-top:7px;color:#6d28d9;font-weight:900}
+
+
+/* Restored polished Remy tutorial/onboarding card */
+.onboarding-card {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(45,124,246,.18), transparent 36%),
+    radial-gradient(circle at 92% 12%, rgba(31,200,188,.16), transparent 33%),
+    rgba(255,255,255,.94);
+  border: 1px solid rgba(40,90,140,.13);
+  box-shadow: 0 18px 42px rgba(30,93,155,.14);
+  border-radius: 26px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+.onboarding-card.hidden { display: none !important; }
+.onboarding-logo { width: 54px; height: 54px; border-radius: 18px; background: #eef7ff; display: grid; place-items: center; margin-bottom: 10px; box-shadow: 0 10px 24px rgba(45,124,246,.12); }
+.onboarding-logo img { width: 46px; height: 46px; object-fit: contain; }
+.onboarding-card .tutorial-head { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:7px; }
+.onboarding-card .tutorial-head strong { font-size:18px; letter-spacing:-.03em; color:#203a57; }
+.onboarding-card .tutorial-head span { font-size:11px; font-weight:900; color:#0e7490; background:#ecfeff; border-radius:999px; padding:5px 8px; white-space:nowrap; }
+.onboarding-card p { margin: 6px 0 0; color:#526377; font-size:12.5px; line-height:1.4; }
+.onboarding-card ul { margin: 10px 0 12px; padding-left: 18px; color:#526377; font-size:12.4px; line-height:1.45; }
+.onboarding-card li { margin:0 0 6px; }
+.onboarding-card .tutorial-note { margin-top: 7px; color:#203a57; font-weight:900; }
+.onboarding-actions { display:grid; grid-template-columns:1fr 108px; gap:8px; margin-top:12px; }
+.primary-btn { border:0; border-radius:16px; padding:11px 12px; color:#fff; font-weight:900; cursor:pointer; background:linear-gradient(135deg,#3e78d6,#7dd6c9); box-shadow:0 12px 24px rgba(45,124,246,.18); }
+.secondary-btn.muted-btn, .muted-btn { border:0; border-radius:16px; padding:11px 12px; background:#eaf3fb; color:#203a57; font-weight:900; box-shadow:none; cursor:pointer; }

@@ -7,7 +7,21 @@
     <section class="hero-card"><div class="status-row"><div class="status-line"><span class="pulse"></span><span id="autoStatus">Automatik aktiv</span></div><div id="aiStatus" class="ai-pill">KI prüft…</div></div><h1>Was suchst du wieder?</h1><p id="memoryCount">Remy merkt sich hilfreiche Seiten.</p></section>
 
 
-    <section class="tutorial-card" id="tutorialCard"><div class="tutorial-head"><strong>Kurzer Start</strong><span>1. Anfrage gratis</span></div><ol class="tutorial-steps"><li><b>Browser suchen</b> findet gespeicherte Seiten, offene Tabs und frühere Recherchen.</li><li><b>Allgemein fragen</b> beantwortet normale KI-Fragen ohne deine Browser-Erinnerungen.</li><li>Unter <b>Einstellungen</b> kannst du sensible Bereiche blockieren und Websites nie merken lassen.</li></ol><p class="tutorial-note">Teste deine erste Anfrage kostenlos ohne Verlust. Viel Spaß mit Remy.</p></section>
+    <section class="onboarding-card" id="tutorialCard">
+      <div class="onboarding-logo"><img src="logo.svg" alt="" /></div>
+      <div class="tutorial-head"><strong>Willkommen bei Remy</strong><span>1. Anfrage gratis</span></div>
+      <p>Remy hilft dir, Webseiten, offene Tabs und frühere Recherchen wiederzufinden.</p>
+      <ul>
+        <li><b>Browser</b> sucht in deinen gespeicherten Seiten und offenen Tabs.</li>
+        <li><b>Allgemein</b> beantwortet normale KI-Fragen ohne Browser-Erinnerungen.</li>
+        <li>In <b>Einstellungen</b> bestimmst du, was Remy nie merken soll.</li>
+      </ul>
+      <p class="tutorial-note">Teste deine erste Anfrage kostenlos ohne Verlust.</p>
+      <div class="onboarding-actions">
+        <button id="startOnboarding" class="primary-btn">Automatisch merken aktivieren</button>
+        <button id="pauseOnboarding" class="secondary-btn muted-btn">Ausblenden</button>
+      </div>
+    </section>
 
     <section class="mode-card"><button id="modeLocal" class="mode-btn active">Browser</button><button id="modePublic" class="mode-btn">Allgemein</button><p id="modeHelp">Browser durchsucht deine gespeicherten Seiten, offenen Tabs und sicheren Erinnerungen.</p></section>
 
