@@ -19,10 +19,11 @@ const app = express();
 const port = Number(process.env.PORT || 8787);
 const publicBaseUrl = (process.env.PUBLIC_BASE_URL || `http://localhost:${port}`).replace(/\/$/, '');
 const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
-const freeLimit = Number(process.env.FREE_MONTHLY_QUESTIONS || 10);
-const plusLimit = Number(process.env.PLUS_MONTHLY_QUESTIONS || 100);
-const lifetimeLimit = Number(process.env.LIFETIME_MONTHLY_QUESTIONS || 200);
-const plusPrice = process.env.PLUS_PRICE || '3,99 € / Monat';
+const freeLimit = Number(process.env.FREE_WEEKLY_REQUESTS || 7);
+const plusLimit = Number(process.env.UNLIMITED_MONTHLY_REQUESTS || 500);
+const lifetimeLimit = Number(process.env.LIFETIME_MONTHLY_REQUESTS || 200);
+const plusPrice = process.env.UNLIMITED_PRICE || '3,99 € / Monat';
+const paidPlanName = process.env.PAID_PLAN_NAME || 'Remy Unlimited';
 const authSecret = process.env.AUTH_SECRET || 'dev-change-me';
 const hasKey = Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'dein_api_key_hier');
 const openai = hasKey ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
@@ -36,32 +37,6 @@ const pendingDevices = new Map();
 const rateBuckets = new Map();
 
 app.use(cors({ origin: true }));
-
-// Stripe braucht den rohen Request-Body für die Webhook-Signatur.
-// Diese Route muss vor express.json() stehen.
-app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
-  try {
-    if (!stripe) return res.status(400).send('Stripe ist nicht eingerichtet.');
-
-    let event;
-    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
-    const signature = req.headers['stripe-signature'];
-
-    if (webhookSecret) {
-      event = stripe.webhooks.constructEvent(req.body, signature, webhookSecret);
-    } else {
-      // Nur als Entwicklungs-Fallback. In Produktion STRIPE_WEBHOOK_SECRET setzen.
-      event = JSON.parse(req.body.toString('utf8'));
-    }
-
-    await handleStripeEvent(event);
-    res.json({ received: true });
-  } catch (error) {
-    console.error('Stripe Webhook Fehler:', error.message);
-    res.status(400).send(`Webhook Error: ${error.message}`);
-  }
-});
-
 app.use(express.json({ limit: '1mb' }));
 app.use(rateLimitMiddleware);
 
@@ -126,43 +101,51 @@ app.post('/api/auth/request-password-reset', async (req, res) => {
   res.json({ ok: true, message: 'Wenn diese E-Mail bei Remy registriert ist, bekommst du später eine Passwort-E-Mail. Der E-Mail-Versand muss noch verbunden werden.' });
 });
 
-app.get('/api/auth/me', requireUser, async (req, res) => res.json({ ok: true, user: publicUser(req.user), usage: publicUsage(await getUsage(req.user.id, req.user.plan)) }));
+app.get('/api/auth/me', requireUser, async (req, res) => res.json({ ok: true, user: publicUser(req.user), usage: publicUsage(await getUsage(req.user.id, req.user.plan), req.user.plan, await hasFreeTrialAvailable(req.user.id, req.user.plan)) }));
 app.post('/api/auth/delete', requireUser, async (req, res) => {
   if (req.user.plan === 'plus' || req.user.plan === 'lifetime') return res.status(400).json({ error: 'Du hast einen aktiven Plan. Bitte verwalte oder kündige ihn zuerst über Stripe.' });
   await deleteUser(req.user.id);
   res.json({ ok: true });
 });
 
-app.get('/api/usage', requireUser, async (req, res) => res.json({ ok: true, usage: publicUsage(await getUsage(req.user.id, req.user.plan)) }));
+app.get('/api/usage', requireUser, async (req, res) => res.json({ ok: true, usage: publicUsage(await getUsage(req.user.id, req.user.plan), req.user.plan, await hasFreeTrialAvailable(req.user.id, req.user.plan)) }));
 
 app.post('/api/ask', requireUser, async (req, res) => {
   try {
     if (!openai) return res.status(400).json({ error: 'Remy kann gerade nicht antworten. Der API-Key ist im Backend noch nicht eingerichtet.' });
     const usage = await getUsage(req.user.id, req.user.plan);
     const limit = planLimit(req.user.plan);
-    if (usage.used >= limit) return res.status(402).json({ error: `Du hast deine ${limit} KI-Fragen für diesen Monat verbraucht.`, usage: publicUsage(usage, req.user.plan) });
+    const trialAvailableBefore = await hasFreeTrialAvailable(req.user.id, req.user.plan);
+    if (usage.used >= limit && !trialAvailableBefore) return res.status(402).json({ error: `Du hast deine ${limit} Anfragen für diesen Zeitraum verbraucht.`, usage: publicUsage(usage, req.user.plan, false) });
 
     const question = clip(req.body?.question, 900);
     const mode = req.body?.mode === 'public' ? 'public' : 'local';
     const memories = Array.isArray(req.body?.memories) ? req.body.memories.slice(0, 10) : [];
-    if (!question) return res.status(400).json({ error: 'Frage fehlt.' });
+    if (!question) return res.status(400).json({ error: 'Anfrage fehlt.' });
     if (mode === 'local' && !memories.length) return res.status(400).json({ error: 'Keine Erinnerungen übergeben.' });
 
     const systemText = mode === 'public'
-      ? 'Du bist Remy im Modus Allgemeine Frage. Antworte hilfreich, klar und kurz auf Deutsch. Nutze allgemeines Wissen. Nutze keine Browser-Erinnerungen und frage nicht nach privaten Browserdaten.'
+      ? 'Du bist Remy im Modus Allgemein fragen. Antworte hilfreich, klar und kurz auf Deutsch. Nutze allgemeines Wissen. Nutze keine Browser-Erinnerungen und frage nicht nach privaten Browserdaten.'
       : 'Du bist Remy im Modus Browser-Suche. Antworte auf Deutsch, klar und knapp. Nutze ausschließlich die übergebenen Browser-Erinnerungen und die sichere aktuelle Seite. Verwende kein allgemeines Wissen, wenn es nicht aus den Quellen hervorgeht. Wenn die Antwort nicht in den Erinnerungen steht, sage ehrlich, dass du es in den gespeicherten Seiten nicht findest. Erfinde keine Quellen. Nenne passende Quellen mit Titel, Domain und URL.';
     const context = mode === 'local' ? memories.map((m, i) => [
       `Quelle ${i + 1}:`, `Titel: ${clip(m.title, 180)}`, `Domain: ${clip(m.domain, 120)}`, `URL: ${clip(m.url, 400)}`,
       `Gespeichert: ${clip(m.savedAt, 80)}`, m.platform ? `Plattform: ${clip(m.platform, 80)}` : '', m.searchQuery ? `Suchanfrage: ${clip(m.searchQuery, 160)}` : '',
       `Kurzfassung: ${clip(m.summary, 700)}`, `Textauszug: ${clip(m.text, 2500)}`
-    ].filter(Boolean).join('\n')).join('\n\n---\n\n') : 'Keine lokalen Erinnerungen: öffentliche allgemeine Frage.';
+    ].filter(Boolean).join('\n')).join('\n\n---\n\n') : 'Keine lokalen Erinnerungen: öffentliche allgemeine Anfrage.';
 
     const response = await openai.responses.create({ model, input: [
       { role: 'system', content: [{ type: 'input_text', text: systemText }] },
-      { role: 'user', content: [{ type: 'input_text', text: `Modus: ${mode}\nFrage:\n${question}\n\nKontext:\n${context}` }] }
+      { role: 'user', content: [{ type: 'input_text', text: `Modus: ${mode}\nAnfrage:\n${question}\n\nKontext:\n${context}` }] }
     ]});
-    const nextUsage = await incrementUsage(req.user.id, req.user.plan);
-    res.json({ ok: true, answer: response.output_text || 'Ich konnte keine Antwort erzeugen.', usage: publicUsage(nextUsage, req.user.plan) });
+    let nextUsage;
+    const trialAvailable = trialAvailableBefore;
+    if (trialAvailable) {
+      await markFreeTrialUsed(req.user.id);
+      nextUsage = await getUsage(req.user.id, req.user.plan);
+    } else {
+      nextUsage = await incrementUsage(req.user.id, req.user.plan);
+    }
+    res.json({ ok: true, answer: response.output_text || 'Ich konnte keine Antwort erzeugen.', usage: publicUsage(nextUsage, req.user.plan, await hasFreeTrialAvailable(req.user.id, req.user.plan)) });
   } catch (error) { console.error(error); res.status(500).json({ error: 'Remy konnte gerade keine KI-Antwort erzeugen.' }); }
 });
 
@@ -172,98 +155,11 @@ app.post('/api/create-checkout-session', requireUser, async (req, res) => {
     return res.status(400).json({ error: 'Stripe ist noch nicht vollständig eingerichtet.' });
   }
   const session = await stripe.checkout.sessions.create({
-    mode: 'subscription',
-    line_items: [{ price: stripePriceId, quantity: 1 }],
-    customer_email: req.user.email,
-    client_reference_id: req.user.id,
-    success_url: `${publicBaseUrl}/auth?success=plus`,
-    cancel_url: `${publicBaseUrl}/auth?cancel=1`,
-    metadata: { remy_user_id: req.user.id, remy_plan: 'plus' },
-    subscription_data: { metadata: { remy_user_id: req.user.id, remy_plan: 'plus' } }
+    mode: 'subscription', line_items: [{ price: stripePriceId, quantity: 1 }], customer_email: req.user.email,
+    success_url: `${publicBaseUrl}/auth?success=plus`, cancel_url: `${publicBaseUrl}/auth?cancel=1`, metadata: { remy_user_id: req.user.id }
   });
   res.json({ ok: true, url: session.url });
 });
-
-
-async function handleStripeEvent(event) {
-  const object = event.data?.object || {};
-  console.log(`Stripe Event empfangen: ${event.type}`);
-
-  if (event.type === 'checkout.session.completed') {
-    const session = object;
-    const userId = session.metadata?.remy_user_id || session.client_reference_id;
-    if (!userId) throw new Error('checkout.session.completed ohne remy_user_id.');
-    await setUserBillingStatus(userId, {
-      plan: session.metadata?.remy_plan === 'lifetime' ? 'lifetime' : 'plus',
-      stripe_customer_id: typeof session.customer === 'string' ? session.customer : null
-    });
-    return;
-  }
-
-  if (event.type === 'customer.subscription.updated') {
-    const sub = object;
-    const userId = sub.metadata?.remy_user_id || await findUserIdByStripeCustomer(sub.customer);
-    if (!userId) return console.warn('Subscription update ohne passenden Remy-Nutzer.');
-    const active = ['active', 'trialing'].includes(sub.status);
-    await setUserBillingStatus(userId, {
-      plan: active ? (sub.metadata?.remy_plan === 'lifetime' ? 'lifetime' : 'plus') : 'free',
-      stripe_customer_id: typeof sub.customer === 'string' ? sub.customer : null
-    });
-    return;
-  }
-
-  if (event.type === 'customer.subscription.deleted') {
-    const sub = object;
-    const userId = sub.metadata?.remy_user_id || await findUserIdByStripeCustomer(sub.customer);
-    if (!userId) return console.warn('Subscription deleted ohne passenden Remy-Nutzer.');
-    await setUserBillingStatus(userId, {
-      plan: 'free',
-      stripe_customer_id: typeof sub.customer === 'string' ? sub.customer : null
-    });
-    return;
-  }
-
-  if (event.type === 'invoice.payment_succeeded') {
-    const invoice = object;
-    const userId = await findUserIdByStripeCustomer(invoice.customer);
-    if (userId) await setUserBillingStatus(userId, { plan: 'plus', stripe_customer_id: typeof invoice.customer === 'string' ? invoice.customer : null });
-    return;
-  }
-
-  if (event.type === 'invoice.payment_failed') {
-    console.warn('Stripe Zahlung fehlgeschlagen:', object.id || 'unbekannte Rechnung');
-  }
-}
-
-async function setUserBillingStatus(userId, patch) {
-  if (!userId) throw new Error('setUserBillingStatus ohne userId.');
-  const cleanPatch = { updated_at: new Date().toISOString() };
-  if (patch.plan) cleanPatch.plan = patch.plan;
-  if (patch.stripe_customer_id) cleanPatch.stripe_customer_id = patch.stripe_customer_id;
-
-  if (supabase) {
-    const { error } = await supabase.from('remy_users').update(cleanPatch).eq('id', userId);
-    if (error) throw new Error(`Supabase Plus-Status speichern fehlgeschlagen: ${error.message}`);
-    return;
-  }
-
-  const s = await readStore();
-  if (!s.users[userId]) throw new Error('Nutzer nicht gefunden.');
-  s.users[userId] = { ...s.users[userId], ...cleanPatch };
-  await writeStore(s);
-}
-
-async function findUserIdByStripeCustomer(customerId) {
-  if (!customerId) return null;
-  if (supabase) {
-    const { data, error } = await supabase.from('remy_users').select('id').eq('stripe_customer_id', String(customerId)).maybeSingle();
-    if (error) throw new Error(`Supabase Stripe-Kunde suchen fehlgeschlagen: ${error.message}`);
-    return data?.id || null;
-  }
-  const s = await readStore();
-  const user = Object.values(s.users).find(u => u.stripe_customer_id === customerId);
-  return user?.id || null;
-}
 
 app.listen(port, () => console.log(`Remy backend läuft auf Port ${port}`));
 
@@ -281,8 +177,20 @@ async function requireUser(req, res, next) {
 }
 
 function currentMonth() { return new Date().toISOString().slice(0, 7); }
+function currentWeek() {
+  const d = new Date();
+  const tmp = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const day = tmp.getUTCDay() || 7;
+  tmp.setUTCDate(tmp.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((tmp - yearStart) / 86400000) + 1) / 7);
+  return `${tmp.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+function usagePeriod(plan = 'free') { return plan === 'free' ? currentWeek() : currentMonth(); }
+function resetLabel(plan = 'free') { return plan === 'free' ? 'Woche' : 'Monat'; }
 function planLimit(plan) { return plan === 'lifetime' ? lifetimeLimit : plan === 'plus' ? plusLimit : freeLimit; }
-function publicUsage(usage, plan = usage.plan) { const limit = planLimit(plan); const used = Number(usage.used || 0); return { plan: plan || 'free', used, limit, remaining: Math.max(0, limit - used), month: usage.month || currentMonth(), plusPrice }; }
+function displayPlan(plan = 'free') { return plan === 'lifetime' ? 'Remy Lifetime' : plan === 'plus' ? paidPlanName : 'Remy Free'; }
+function publicUsage(usage, plan = usage.plan, trialAvailable = false) { const limit = planLimit(plan); const used = Number(usage.used || 0); return { plan: plan || 'free', planName: displayPlan(plan), used, limit, remaining: Math.max(0, limit - used), period: usage.month || usagePeriod(plan), resetLabel: resetLabel(plan), plusPrice, trialAvailable: Boolean(trialAvailable) }; }
 function publicUser(user) { return { id: user.id, email: user.email, plan: user.plan || 'free' }; }
 function normalizeEmail(email) { return String(email || '').trim().toLowerCase(); }
 function safeId(v) { return String(v || '').replace(/[^a-zA-Z0-9._:-]/g, '').slice(0, 160); }
@@ -326,8 +234,32 @@ async function deleteUser(id) {
   }
   const s = await readStore(); delete s.users[id]; delete s.usage[id]; await writeStore(s);
 }
+
+async function hasFreeTrialAvailable(userId, plan = 'free') {
+  if (plan !== 'free') return false;
+  if (supabase) {
+    const { data, error } = await supabase.from('remy_free_trials').select('used').eq('user_id', userId).maybeSingle();
+    if (error) throw new Error(`Supabase Test-Anfrage laden fehlgeschlagen: ${error.message}`);
+    return !data?.used;
+  }
+  const s = await readStore();
+  s.freeTrials ||= {};
+  return !s.freeTrials[userId]?.used;
+}
+async function markFreeTrialUsed(userId) {
+  if (supabase) {
+    const { error } = await supabase.from('remy_free_trials').upsert({ user_id: userId, used: true, used_at: new Date().toISOString() }, { onConflict: 'user_id' });
+    if (error) throw new Error(`Supabase Test-Anfrage speichern fehlgeschlagen: ${error.message}`);
+    return;
+  }
+  const s = await readStore();
+  s.freeTrials ||= {};
+  s.freeTrials[userId] = { used: true, used_at: new Date().toISOString() };
+  await writeStore(s);
+}
+
 async function getUsage(userId, plan = 'free') {
-  const month = currentMonth();
+  const month = usagePeriod(plan);
   if (supabase) {
     const { data, error } = await supabase.from('remy_usage').select('*').eq('user_id', userId).eq('month', month).maybeSingle();
     if (error) throw new Error(`Supabase Nutzung laden fehlgeschlagen: ${error.message}`);
@@ -362,7 +294,7 @@ async function incrementUsage(userId, plan = 'free') {
 function renderAuthPage(deviceId) {
   return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Remy Login</title><style>
   body{font-family:Inter,system-ui,sans-serif;background:linear-gradient(135deg,#fff7ed,#eef2ff);margin:0;min-height:100vh;display:grid;place-items:center;color:#1f2937}.card{width:min(440px,92vw);background:white;border-radius:28px;padding:28px;box-shadow:0 24px 70px #312e8133}.brand{display:flex;gap:12px;align-items:center}.logo-dot{width:54px;height:54px;border-radius:20px;background:#eef2ff;display:grid;place-items:center;overflow:hidden}.logo-dot img{width:48px;height:48px;object-fit:contain}h1{margin:18px 0 6px;font-size:28px}p{color:#6b7280;line-height:1.5}.tabs{display:flex;background:#f3f4f6;border-radius:16px;padding:4px;margin:20px 0}.tabs button{flex:1;border:0;border-radius:12px;padding:11px 8px;background:transparent;font-weight:800;cursor:pointer}.tabs button.active{background:white;box-shadow:0 6px 18px #0001}input{width:100%;box-sizing:border-box;border:1px solid #e5e7eb;border-radius:16px;padding:14px;margin:7px 0;font-size:15px}button.main{width:100%;border:0;border-radius:16px;background:#4f46e5;color:white;font-weight:900;padding:14px;margin-top:10px;cursor:pointer}.small-action{border:0;background:transparent;color:#4f46e5;font-weight:800;cursor:pointer;margin-top:12px}.msg{min-height:20px;margin-top:12px;font-size:14px;line-height:1.4}.ok{color:#059669}.err{color:#dc2626}.hidden{display:none!important}.hint{font-size:12px;color:#6b7280;margin-top:10px}
-  </style></head><body><main class="card"><div class="brand"><div class="logo-dot"><img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTI4IiBoZWlnaHQ9IjEyOCIgdmlld0JveD0iMCAwIDEyOCAxMjgiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPHJlY3Qgd2lkdGg9IjEyOCIgaGVpZ2h0PSIxMjgiIHJ4PSIzMCIgZmlsbD0iI0VFRjdGRiIvPgogIDxwYXRoIGQ9Ik0zMSAyNmMwLTggNi0xNCAxNC0xNGg0MGM4IDAgMTQgNiAxNCAxNHY2MmMwIDYtNyAxMC0xMiA2TDcwIDgyYy0zLTItNy0yLTEwIDBMNDMgOTRjLTUgNC0xMiAwLTEyLTZWMjZ6IiBmaWxsPSIjM0U3OEQ2Ii8+CiAgPHBhdGggZD0iTTc2IDEyaDljOCAwIDE0IDYgMTQgMTR2OEg4NGMtNCAwLTgtNC04LThWMTJ6IiBmaWxsPSIjODJEOENEIi8+CiAgPGNpcmNsZSBjeD0iNTIiIGN5PSI1MyIgcj0iNyIgZmlsbD0iI0ZGRkZGRiIvPgogIDxjaXJjbGUgY3g9Ijc4IiBjeT0iNTMiIHI9IjciIGZpbGw9IiNGRkZGRkYiLz4KICA8Y2lyY2xlIGN4PSI1NCIgY3k9IjU0IiByPSIzIiBmaWxsPSIjMjAzQTU3Ii8+CiAgPGNpcmNsZSBjeD0iNzYiIGN5PSI1NCIgcj0iMyIgZmlsbD0iIzIwM0E1NyIvPgogIDxwYXRoIGQ9Ik01NSA3MGM2IDYgMTUgNiAyMSAwIiBzdHJva2U9IiMyMDNBNTciIHN0cm9rZS13aWR0aD0iNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgPGNpcmNsZSBjeD0iNDAiIGN5PSI2NCIgcj0iNSIgZmlsbD0iI0Y3QjZBNiIgb3BhY2l0eT0iLjcyIi8+CiAgPGNpcmNsZSBjeD0iOTAiIGN5PSI2NCIgcj0iNSIgZmlsbD0iI0Y3QjZBNiIgb3BhY2l0eT0iLjcyIi8+Cjwvc3ZnPgo=" alt="Remy"></div><strong>Remy</strong></div><h1>Einloggen und Remy nutzen</h1><p>Dein Free-Limit, Plus-Status und deine Remy-Daten bleiben deinem Konto zugeordnet.</p><div class="tabs"><button id="loginTab" class="active">Einloggen</button><button id="registerTab">Konto erstellen</button></div><input id="email" type="email" placeholder="E-Mail"><input id="password" type="password" placeholder="Passwort"><input id="password2" class="hidden" type="password" placeholder="Passwort wiederholen"><button id="submit" class="main">Einloggen</button><button id="forgot" class="small-action">Passwort vergessen?</button><div id="msg" class="msg"></div><div class="hint">Nach erfolgreichem Login kannst du dieses Fenster schließen und Remy öffnen.</div></main><script>
+  </style></head><body><main class="card"><div class="brand"><div class="logo-dot"><img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTI4IiBoZWlnaHQ9IjEyOCIgdmlld0JveD0iMCAwIDEyOCAxMjgiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPHJlY3Qgd2lkdGg9IjEyOCIgaGVpZ2h0PSIxMjgiIHJ4PSIzMCIgZmlsbD0iI0VFRjdGRiIvPgogIDxwYXRoIGQ9Ik0zMSAyNmMwLTggNi0xNCAxNC0xNGg0MGM4IDAgMTQgNiAxNCAxNHY2MmMwIDYtNyAxMC0xMiA2TDcwIDgyYy0zLTItNy0yLTEwIDBMNDMgOTRjLTUgNC0xMiAwLTEyLTZWMjZ6IiBmaWxsPSIjM0U3OEQ2Ii8+CiAgPHBhdGggZD0iTTc2IDEyaDljOCAwIDE0IDYgMTQgMTR2OEg4NGMtNCAwLTgtNC04LThWMTJ6IiBmaWxsPSIjODJEOENEIi8+CiAgPGNpcmNsZSBjeD0iNTIiIGN5PSI1MyIgcj0iNyIgZmlsbD0iI0ZGRkZGRiIvPgogIDxjaXJjbGUgY3g9Ijc4IiBjeT0iNTMiIHI9IjciIGZpbGw9IiNGRkZGRkYiLz4KICA8Y2lyY2xlIGN4PSI1NCIgY3k9IjU0IiByPSIzIiBmaWxsPSIjMjAzQTU3Ii8+CiAgPGNpcmNsZSBjeD0iNzYiIGN5PSI1NCIgcj0iMyIgZmlsbD0iIzIwM0E1NyIvPgogIDxwYXRoIGQ9Ik01NSA3MGM2IDYgMTUgNiAyMSAwIiBzdHJva2U9IiMyMDNBNTciIHN0cm9rZS13aWR0aD0iNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgPGNpcmNsZSBjeD0iNDAiIGN5PSI2NCIgcj0iNSIgZmlsbD0iI0Y3QjZBNiIgb3BhY2l0eT0iLjcyIi8+CiAgPGNpcmNsZSBjeD0iOTAiIGN5PSI2NCIgcj0iNSIgZmlsbD0iI0Y3QjZBNiIgb3BhY2l0eT0iLjcyIi8+Cjwvc3ZnPgo=" alt="Remy"></div><strong>Remy</strong></div><h1>Einloggen und Remy nutzen</h1><p>Deine Anfragen, dein Remy-Unlimited-Status und deine Remy-Daten bleiben deinem Konto zugeordnet.</p><div class="tabs"><button id="loginTab" class="active">Einloggen</button><button id="registerTab">Konto erstellen</button></div><input id="email" type="email" placeholder="E-Mail"><input id="password" type="password" placeholder="Passwort"><input id="password2" class="hidden" type="password" placeholder="Passwort wiederholen"><button id="submit" class="main">Einloggen</button><button id="forgot" class="small-action">Passwort vergessen?</button><div id="msg" class="msg"></div><div class="hint">Nach erfolgreichem Login kannst du dieses Fenster schließen und Remy öffnen.</div></main><script>
   let mode='login';const d=${JSON.stringify(deviceId)};function q(id){return document.getElementById(id)}
   function setMode(m){mode=m;q('loginTab').classList.toggle('active',m==='login');q('registerTab').classList.toggle('active',m==='register');q('password').classList.toggle('hidden',m==='reset');q('password2').classList.toggle('hidden',m!=='register');q('forgot').classList.toggle('hidden',m==='reset');q('submit').textContent=m==='login'?'Einloggen':m==='register'?'Konto erstellen':'Reset-Link anfordern';q('msg').textContent=''}
   q('loginTab').onclick=()=>setMode('login');q('registerTab').onclick=()=>setMode('register');q('forgot').onclick=()=>setMode('reset');

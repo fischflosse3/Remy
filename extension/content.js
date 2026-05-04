@@ -260,7 +260,7 @@ setInterval(() => {
         <button id="remy-side-close">×</button>
       </header>
       <p id="remy-mode-help" class="remy-mode-help">Browser-Suche nutzt nur deine gespeicherten Seiten und sichere aktuelle Inhalte.</p>
-      <div id="remy-side-usage" class="remy-side-usage">Fragen werden geladen…</div>
+      <div id="remy-side-usage" class="remy-side-usage">Anfragen werden geladen…</div>
       <div id="remy-side-messages" class="remy-side-messages"></div>
       <form id="remy-side-form" class="remy-side-form">
         <textarea id="remy-side-input" rows="2" placeholder="Browser suchen…"></textarea>
@@ -285,8 +285,8 @@ setInterval(() => {
   const $r = (id) => root.querySelector(`#${id}`);
   let mode = 'local';
   const histories = {
-    local: [{ who: 'bot', text: 'Browser-Suche. Ich suche nur in deinen gespeicherten Seiten und sicheren aktuellen Inhalten.' }],
-    public: [{ who: 'bot', text: 'Allgemeine Frage. Ich nutze allgemeines KI-Wissen. Bitte keine privaten Daten eingeben.' }]
+    local: [{ who: 'bot', text: 'Browser suchen. Ich suche nur in deinen gespeicherten Seiten und sicheren aktuellen Inhalten.' }],
+    public: [{ who: 'bot', text: 'Allgemein fragen. Ich nutze allgemeines KI-Wissen. Bitte keine privaten Daten eingeben.' }]
   };
 
   $r('remy-float-button').addEventListener('click', () => {
@@ -323,7 +323,7 @@ setInterval(() => {
     $r('remy-side-mode-label').textContent = mode === 'public' ? 'Allgemein' : 'Browser';
     $r('remy-side-panel').classList.toggle('public-mode', mode === 'public');
     $r('remy-side-panel').classList.toggle('local-mode', mode === 'local');
-    $r('remy-mode-help').textContent = mode === 'public' ? 'Allgemeine Frage nutzt KI-Wissen. Keine privaten Daten eingeben.' : 'Browser-Suche nutzt nur deine gespeicherten Seiten und sichere aktuelle Inhalte.';
+    $r('remy-mode-help').textContent = mode === 'public' ? 'Allgemein fragen nutzt KI-Wissen. Keine privaten Daten eingeben.' : 'Browser-Suche nutzt nur deine gespeicherten Seiten und sichere aktuelle Inhalte.';
     $r('remy-side-input').placeholder = mode === 'public' ? 'Allgemein fragen…' : 'Browser suchen…';
     renderHistory();
     refreshUsage();
@@ -361,7 +361,10 @@ setInterval(() => {
   function updateUsage(usage) {
     if (!usage) return;
     const remaining = usage.remaining === null || usage.remaining === undefined ? usage.limit - usage.used : usage.remaining;
-    $r('remy-side-usage').textContent = `${Math.max(0, remaining)} von ${usage.limit} Fragen übrig · ${usage.plan === 'free' ? 'Free' : usage.plan}`;
+    const label = usage.plan === 'free' ? 'Free' : (usage.planName || (usage.plan === 'lifetime' ? 'Lifetime' : 'Unlimited'));
+    const period = usage.resetLabel ? ` · ${usage.resetLabel}` : '';
+    const trial = usage.trialAvailable ? ' · Test frei' : '';
+    $r('remy-side-usage').textContent = `${Math.max(0, remaining)} von ${usage.limit} Anfragen übrig${period} · ${label}${trial}`;
   }
   function refreshUsage() { chrome.runtime.sendMessage({ type: 'REMY_GET_AUTH' }, r => { if (r?.usage) updateUsage(r.usage); }); }
 
