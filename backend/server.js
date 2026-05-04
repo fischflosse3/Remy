@@ -37,6 +37,46 @@ const pendingDevices = new Map();
 const rateBuckets = new Map();
 
 app.use(cors({ origin: true }));
+
+// Stripe braucht den rohen Request-Body für Webhook-Signaturen.
+// Diese Route muss vor express.json() registriert werden.
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    if (!stripe) return res.status(400).send('Stripe ist nicht eingerichtet.');
+    let event;
+    const signature = req.headers['stripe-signature'];
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
+    if (webhookSecret && signature) {
+      event = stripe.webhooks.constructEvent(req.body, signature, webhookSecret);
+    } else {
+      event = JSON.parse(req.body.toString('utf8'));
+    }
+
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data.object;
+      const userId = session.metadata?.remy_user_id || session.client_reference_id;
+      if (userId) {
+        await setUserPlanById(userId, 'plus', session.customer || null);
+      }
+    }
+
+    if (event.type === 'invoice.payment_succeeded') {
+      const invoice = event.data.object;
+      if (invoice.customer) await setUserPlanByStripeCustomer(invoice.customer, 'plus');
+    }
+
+    if (event.type === 'customer.subscription.deleted') {
+      const subscription = event.data.object;
+      if (subscription.customer) await setUserPlanByStripeCustomer(subscription.customer, 'free');
+    }
+
+    res.json({ received: true });
+  } catch (error) {
+    console.error('Stripe webhook error:', error.message || error);
+    res.status(400).send(`Webhook Error: ${error.message || 'unknown'}`);
+  }
+});
+
 app.use(express.json({ limit: '1mb' }));
 app.use(rateLimitMiddleware);
 
@@ -150,16 +190,78 @@ app.post('/api/ask', requireUser, async (req, res) => {
 });
 
 app.post('/api/create-checkout-session', requireUser, async (req, res) => {
-  if (!stripe || !stripePriceId) {
-    if (stripePaymentLink) return res.json({ ok: true, url: stripePaymentLink });
-    return res.status(400).json({ error: 'Stripe ist noch nicht vollständig eingerichtet.' });
+  try {
+    if (!stripe || !stripePriceId) {
+      if (stripePaymentLink) return res.json({ ok: true, url: stripePaymentLink });
+      return res.status(400).json({ error: 'Stripe ist noch nicht vollständig eingerichtet.' });
+    }
+
+    const sessionConfig = {
+      mode: 'subscription',
+      line_items: [{ price: stripePriceId, quantity: 1 }],
+      success_url: `${publicBaseUrl}/auth?success=plus`,
+      cancel_url: `${publicBaseUrl}/auth?cancel=1`,
+      client_reference_id: req.user.id,
+      metadata: { remy_user_id: req.user.id },
+      subscription_data: { metadata: { remy_user_id: req.user.id } }
+    };
+
+    if (req.user.stripe_customer_id) sessionConfig.customer = req.user.stripe_customer_id;
+    else sessionConfig.customer_email = req.user.email;
+
+    const session = await stripe.checkout.sessions.create(sessionConfig);
+    res.json({ ok: true, url: session.url });
+  } catch (error) {
+    console.error('Checkout session error:', error.message || error);
+    res.status(500).json({ error: 'Upgrade konnte gerade nicht geöffnet werden.' });
   }
-  const session = await stripe.checkout.sessions.create({
-    mode: 'subscription', line_items: [{ price: stripePriceId, quantity: 1 }], customer_email: req.user.email,
-    success_url: `${publicBaseUrl}/auth?success=plus`, cancel_url: `${publicBaseUrl}/auth?cancel=1`, metadata: { remy_user_id: req.user.id }
-  });
-  res.json({ ok: true, url: session.url });
 });
+
+app.post('/api/create-customer-portal-session', requireUser, async (req, res) => {
+  try {
+    if (!stripe) return res.status(400).json({ error: 'Stripe ist noch nicht eingerichtet.' });
+    if (!req.user.stripe_customer_id) return res.status(400).json({ error: 'Für dieses Konto wurde noch kein Stripe-Abo gefunden.' });
+
+    const portal = await stripe.billingPortal.sessions.create({
+      customer: req.user.stripe_customer_id,
+      return_url: `${publicBaseUrl}/auth?account=1`
+    });
+    res.json({ ok: true, url: portal.url });
+  } catch (error) {
+    console.error('Customer portal error:', error.message || error);
+    res.status(500).json({ error: 'Abo-Verwaltung konnte gerade nicht geöffnet werden.' });
+  }
+});
+
+async function setUserPlanById(userId, plan, stripeCustomerId = null) {
+  if (supabase) {
+    const update = { plan };
+    if (stripeCustomerId) update.stripe_customer_id = stripeCustomerId;
+    const { error } = await supabase.from('remy_users').update(update).eq('id', userId);
+    if (error) throw new Error(`Supabase Plan speichern fehlgeschlagen: ${error.message}`);
+    return;
+  }
+  const s = await readStore();
+  if (s.users[userId]) {
+    s.users[userId].plan = plan;
+    if (stripeCustomerId) s.users[userId].stripe_customer_id = stripeCustomerId;
+    await writeStore(s);
+  }
+}
+
+async function setUserPlanByStripeCustomer(stripeCustomerId, plan) {
+  if (!stripeCustomerId) return;
+  if (supabase) {
+    const { error } = await supabase.from('remy_users').update({ plan }).eq('stripe_customer_id', stripeCustomerId);
+    if (error) throw new Error(`Supabase Plan nach Stripe-Kunde speichern fehlgeschlagen: ${error.message}`);
+    return;
+  }
+  const s = await readStore();
+  for (const user of Object.values(s.users)) {
+    if (user.stripe_customer_id === stripeCustomerId) user.plan = plan;
+  }
+  await writeStore(s);
+}
 
 app.listen(port, () => console.log(`Remy backend läuft auf Port ${port}`));
 

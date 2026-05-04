@@ -68,7 +68,18 @@ async function clearChatMain(){
 }
 
 async function openUpgrade(){ if(!state.loggedIn){send({type:'REMY_START_LOGIN'});return;} const res=await fetch(`${getBackendUrl()}/api/create-checkout-session`,{method:'POST',headers:authHeaders(),body:'{}'}); const d=await res.json().catch(()=>({})); if(d.url) chrome.tabs.create({url:d.url}); else $('answer').textContent=d.error||'Upgrade ist noch nicht eingerichtet.'; }
-async function manageSubscription(){ $('answer').textContent='Abo-Verwaltung wird später über Stripe geöffnet, sobald dein Customer Portal vollständig verbunden ist.'; }
+async function manageSubscription(){
+  if(!state.loggedIn){ send({type:'REMY_START_LOGIN'}); return; }
+  $('answer').textContent='Abo-Verwaltung wird geöffnet…';
+  try{
+    const res=await fetch(`${getBackendUrl()}/api/create-customer-portal-session`,{method:'POST',headers:authHeaders(),body:'{}'});
+    const d=await res.json().catch(()=>({}));
+    if(d.url) chrome.tabs.create({url:d.url});
+    else $('answer').textContent=d.error||'Abo-Verwaltung konnte gerade nicht geöffnet werden.';
+  }catch{
+    $('answer').textContent='Abo-Verwaltung konnte gerade nicht geöffnet werden.';
+  }
+}
 async function deleteAccount(){
   const confirmed = await showDeleteModal();
   if(!confirmed) return;
