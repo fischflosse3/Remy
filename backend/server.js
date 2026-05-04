@@ -19,15 +19,17 @@ const app = express();
 const port = Number(process.env.PORT || 8787);
 const publicBaseUrl = (process.env.PUBLIC_BASE_URL || `http://localhost:${port}`).replace(/\/$/, '');
 const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
-const freeLimit = Number(process.env.FREE_MONTHLY_QUESTIONS || 10);
-const plusLimit = Number(process.env.PLUS_MONTHLY_QUESTIONS || 100);
-const lifetimeLimit = Number(process.env.LIFETIME_MONTHLY_QUESTIONS || 200);
-const plusPrice = process.env.PLUS_PRICE || '3,99 € / Monat';
+const freeLimit = Number(process.env.FREE_WEEKLY_REQUESTS || 7);
+const plusLimit = Number(process.env.UNLIMITED_MONTHLY_REQUESTS || 500);
+const lifetimeLimit = Number(process.env.LIFETIME_MONTHLY_REQUESTS || 200);
+const plusPrice = process.env.UNLIMITED_PRICE || '3,99 € / Monat';
+const paidPlanName = process.env.PAID_PLAN_NAME || 'Remy Unlimited';
 const authSecret = process.env.AUTH_SECRET || 'dev-change-me';
 const hasKey = Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'dein_api_key_hier');
 const openai = hasKey ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 const stripePriceId = process.env.STRIPE_PRICE_ID || '';
+const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
 const stripePaymentLink = process.env.STRIPE_PAYMENT_LINK || '';
 const supabase = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
   ? createClient(process.env.SUPABASE_URL.replace(/\/$/, ''), process.env.SUPABASE_SERVICE_ROLE_KEY)
@@ -36,11 +38,56 @@ const pendingDevices = new Map();
 const rateBuckets = new Map();
 
 app.use(cors({ origin: true }));
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    let event;
+    if (stripe && stripeWebhookSecret) {
+      const signature = req.headers['stripe-signature'];
+      event = stripe.webhooks.constructEvent(req.body, signature, stripeWebhookSecret);
+    } else {
+      event = JSON.parse(Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body || '{}'));
+    }
+
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data.object;
+      const userId = session?.metadata?.remy_user_id || session?.client_reference_id || session?.subscription_details?.metadata?.remy_user_id;
+      if (userId) await updateUserPlan(userId, 'plus', session.customer || '', session.subscription || '');
+    }
+
+    if (event.type === 'invoice.payment_succeeded') {
+      const invoice = event.data.object;
+      const customerId = invoice?.customer || '';
+      const subscriptionId = invoice?.subscription || '';
+      if (customerId) await updateUserByStripeCustomer(customerId, 'plus', subscriptionId);
+    }
+
+    if (event.type === 'customer.subscription.deleted') {
+      const subscription = event.data.object;
+      const userId = subscription?.metadata?.remy_user_id || '';
+      if (userId) await updateUserPlan(userId, 'free', subscription.customer || '', subscription.id || '');
+      else if (subscription?.customer) await updateUserByStripeCustomer(subscription.customer, 'free', subscription.id || '');
+    }
+
+    res.json({ received: true });
+  } catch (error) {
+    console.error('Stripe webhook error:', error.message || error);
+    res.status(400).send(`Webhook Error: ${error.message || 'unknown error'}`);
+  }
+});
+app.get('/api/stripe/webhook', (_req, res) => res.json({ ok: true, message: 'Stripe webhook endpoint bereit. Stripe sendet hier per POST.' }));
 app.use(express.json({ limit: '1mb' }));
 app.use(rateLimitMiddleware);
 
+app.get('/logo.svg', async (_req, res) => {
+  try {
+    const svg = await fs.readFile(path.join(__dirname, '../extension/logo.svg'), 'utf8');
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.end(svg);
+  } catch { res.status(404).end(''); }
+});
+
 app.get('/health', (_req, res) => res.json({ ok: true, service: 'remy-backend', hasKey, model, supabase: Boolean(supabase), auth: true }));
-app.get('/api/config', (_req, res) => res.json({ ok: true, plusPrice, paymentLink: stripePaymentLink, publicBaseUrl, hasCheckout: Boolean(stripe && stripePriceId) }));
+app.get('/api/config', (_req, res) => res.json({ ok: true, plusPrice, paidPlanName, paymentLink: stripePaymentLink, publicBaseUrl, hasCheckout: Boolean(stripe && stripePriceId) }));
 
 app.get('/auth', (req, res) => {
   const deviceId = safeId(req.query.deviceId || `web-${Date.now()}`);
@@ -97,7 +144,7 @@ app.post('/api/ask', requireUser, async (req, res) => {
     if (!openai) return res.status(400).json({ error: 'Remy kann gerade nicht antworten. Der API-Key ist im Backend noch nicht eingerichtet.' });
     const usage = await getUsage(req.user.id, req.user.plan);
     const limit = planLimit(req.user.plan);
-    if (usage.used >= limit) return res.status(402).json({ error: `Du hast deine ${limit} KI-Fragen für diesen Monat verbraucht.`, usage: publicUsage(usage, req.user.plan) });
+    if (usage.used >= limit) return res.status(402).json({ error: `Du hast deine ${limit} Anfragen verbraucht.`, usage: publicUsage(usage, req.user.plan) });
 
     const question = clip(req.body?.question, 900);
     const mode = req.body?.mode === 'public' ? 'public' : 'local';
@@ -140,8 +187,14 @@ app.post('/api/create-checkout-session', requireUser, async (req, res) => {
     return res.status(400).json({ error: 'Stripe ist noch nicht vollständig eingerichtet.' });
   }
   const session = await stripe.checkout.sessions.create({
-    mode: 'subscription', line_items: [{ price: stripePriceId, quantity: 1 }], customer_email: req.user.email,
-    success_url: `${publicBaseUrl}/auth?success=plus`, cancel_url: `${publicBaseUrl}/auth?cancel=1`, metadata: { remy_user_id: req.user.id }
+    mode: 'subscription',
+    line_items: [{ price: stripePriceId, quantity: 1 }],
+    customer_email: req.user.email,
+    client_reference_id: req.user.id,
+    success_url: `${publicBaseUrl}/auth?success=plus`,
+    cancel_url: `${publicBaseUrl}/auth?cancel=1`,
+    metadata: { remy_user_id: req.user.id },
+    subscription_data: { metadata: { remy_user_id: req.user.id } }
   });
   res.json({ ok: true, url: session.url });
 });
@@ -163,7 +216,7 @@ async function requireUser(req, res, next) {
 
 function currentMonth() { return new Date().toISOString().slice(0, 7); }
 function planLimit(plan) { return plan === 'lifetime' ? lifetimeLimit : plan === 'plus' ? plusLimit : freeLimit; }
-function publicUsage(usage, plan = usage.plan) { const limit = planLimit(plan); const used = Number(usage.used || 0); return { plan: plan || 'free', used, limit, remaining: Math.max(0, limit - used), month: usage.month || currentMonth(), plusPrice }; }
+function publicUsage(usage, plan = usage.plan) { const limit = planLimit(plan); const used = Number(usage.used || 0); return { plan: plan || 'free', used, limit, remaining: Math.max(0, limit - used), month: usage.month || currentMonth(), plusPrice, paidPlanName }; }
 function publicUser(user) { return { id: user.id, email: user.email, plan: user.plan || 'free' }; }
 function normalizeEmail(email) { return String(email || '').trim().toLowerCase(); }
 function safeId(v) { return String(v || '').replace(/[^a-zA-Z0-9._:-]/g, '').slice(0, 160); }
@@ -179,4 +232,49 @@ async function deleteUser(id) { if (supabase) { try { await supabase.from('remy_
 async function getUsage(userId, plan = 'free') { const month = currentMonth(); if (supabase) { try { const { data } = await supabase.from('remy_usage').select('*').eq('user_id', userId).eq('month', month).maybeSingle(); if (data) return { ...data, plan }; const row = { user_id: userId, month, used: 0 }; await supabase.from('remy_usage').insert(row); return { ...row, plan }; } catch (e) { console.warn('Supabase usage failed', e.message); } } const s = await readStore(); const key = `${userId}:${month}`; s.usage[key] ||= { user_id: userId, month, used: 0 }; await writeStore(s); return { ...s.usage[key], plan }; }
 async function incrementUsage(userId, plan = 'free') { const usage = await getUsage(userId, plan); usage.used = Number(usage.used || 0) + 1; if (supabase) { try { await supabase.from('remy_usage').upsert({ user_id: userId, month: usage.month, used: usage.used }, { onConflict: 'user_id,month' }); return { ...usage, plan }; } catch (e) { console.warn('Supabase increment failed', e.message); } } const s = await readStore(); s.usage[`${userId}:${usage.month}`] = usage; await writeStore(s); return { ...usage, plan }; }
 
-function renderAuthPage(deviceId) { return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Remy Login</title><style>body{font-family:Inter,system-ui,sans-serif;background:linear-gradient(135deg,#fff7ed,#eef2ff);margin:0;min-height:100vh;display:grid;place-items:center;color:#1f2937}.card{width:min(430px,92vw);background:white;border-radius:28px;padding:28px;box-shadow:0 24px 70px #312e8133}.brand{display:flex;gap:12px;align-items:center}.logo{width:54px;height:54px;border-radius:18px;background:#eef2ff;padding:8px}h1{margin:18px 0 6px;font-size:28px}p{color:#6b7280;line-height:1.5}.tabs{display:flex;background:#f3f4f6;border-radius:16px;padding:4px;margin:20px 0}.tabs button{flex:1;border:0;border-radius:12px;padding:11px;background:transparent;font-weight:800}.tabs button.active{background:white;box-shadow:0 6px 18px #0001}input{width:100%;box-sizing:border-box;border:1px solid #e5e7eb;border-radius:16px;padding:14px;margin:7px 0;font-size:15px}button.main{width:100%;border:0;border-radius:16px;background:#4f46e5;color:white;font-weight:900;padding:14px;margin-top:10px;cursor:pointer}.msg{min-height:20px;margin-top:12px;font-size:14px}.ok{color:#059669}.err{color:#dc2626}</style></head><body><main class="card"><div class="brand"><img class="logo" src="/logo-placeholder" onerror="this.style.display='none'"><strong>Remy</strong></div><h1>Einloggen und Remy nutzen</h1><p>Dein Free-Limit, Plus-Status und deine Remy-Daten bleiben so deinem Konto zugeordnet.</p><div class="tabs"><button id="loginTab" class="active">Einloggen</button><button id="registerTab">Konto erstellen</button></div><input id="email" type="email" placeholder="E-Mail"><input id="password" type="password" placeholder="Passwort"><button id="submit" class="main">Einloggen</button><div id="msg" class="msg"></div></main><script>let mode='login';const d=${JSON.stringify(deviceId)};function q(id){return document.getElementById(id)}function setMode(m){mode=m;q('loginTab').classList.toggle('active',m==='login');q('registerTab').classList.toggle('active',m==='register');q('submit').textContent=m==='login'?'Einloggen':'Konto erstellen'}q('loginTab').onclick=()=>setMode('login');q('registerTab').onclick=()=>setMode('register');q('submit').onclick=async()=>{q('msg').textContent='Bitte warten…';q('msg').className='msg';try{const r=await fetch('/api/auth/'+(mode==='login'?'login':'register'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:q('email').value,password:q('password').value,deviceId:d})});const data=await r.json();if(!r.ok)throw new Error(data.error||'Fehler');q('msg').className='msg ok';q('msg').textContent='Fertig. Du kannst dieses Fenster schließen und Remy öffnen.'}catch(e){q('msg').className='msg err';q('msg').textContent=e.message||'Login kann nicht abgeschlossen werden.'}};</script></body></html>`; }
+
+async function updateUserPlan(userId, plan = 'plus', stripeCustomerId = '', stripeSubscriptionId = '') {
+  if (!userId) return null;
+  if (supabase) {
+    try {
+      const update = { plan };
+      if (stripeCustomerId) update.stripe_customer_id = stripeCustomerId;
+      if (stripeSubscriptionId) update.stripe_subscription_id = stripeSubscriptionId;
+      const { data, error } = await supabase.from('remy_users').update(update).eq('id', userId).select('*').maybeSingle();
+      if (error) throw error;
+      return data;
+    } catch (e) { console.warn('Supabase update plan failed', e.message); }
+  }
+  const s = await readStore();
+  if (s.users[userId]) {
+    s.users[userId].plan = plan;
+    if (stripeCustomerId) s.users[userId].stripe_customer_id = stripeCustomerId;
+    if (stripeSubscriptionId) s.users[userId].stripe_subscription_id = stripeSubscriptionId;
+    await writeStore(s);
+    return s.users[userId];
+  }
+  return null;
+}
+async function updateUserByStripeCustomer(stripeCustomerId = '', plan = 'plus', stripeSubscriptionId = '') {
+  if (!stripeCustomerId) return null;
+  if (supabase) {
+    try {
+      const update = { plan };
+      if (stripeSubscriptionId) update.stripe_subscription_id = stripeSubscriptionId;
+      const { data, error } = await supabase.from('remy_users').update(update).eq('stripe_customer_id', stripeCustomerId).select('*').maybeSingle();
+      if (error) throw error;
+      return data;
+    } catch (e) { console.warn('Supabase update by customer failed', e.message); }
+  }
+  const s = await readStore();
+  const user = Object.values(s.users).find(u => u.stripe_customer_id === stripeCustomerId);
+  if (user) {
+    user.plan = plan;
+    if (stripeSubscriptionId) user.stripe_subscription_id = stripeSubscriptionId;
+    await writeStore(s);
+    return user;
+  }
+  return null;
+}
+
+function renderAuthPage(deviceId) { return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Remy Login</title><style>body{font-family:Inter,system-ui,sans-serif;background:linear-gradient(135deg,#fff7ed,#eef2ff);margin:0;min-height:100vh;display:grid;place-items:center;color:#1f2937}.card{width:min(430px,92vw);background:white;border-radius:28px;padding:28px;box-shadow:0 24px 70px #312e8133}.brand{display:flex;gap:12px;align-items:center}.logo{width:54px;height:54px;border-radius:18px;background:#eef2ff;padding:8px}h1{margin:18px 0 6px;font-size:28px}p{color:#6b7280;line-height:1.5}.tabs{display:flex;background:#f3f4f6;border-radius:16px;padding:4px;margin:20px 0}.tabs button{flex:1;border:0;border-radius:12px;padding:11px;background:transparent;font-weight:800}.tabs button.active{background:white;box-shadow:0 6px 18px #0001}input{width:100%;box-sizing:border-box;border:1px solid #e5e7eb;border-radius:16px;padding:14px;margin:7px 0;font-size:15px}button.main{width:100%;border:0;border-radius:16px;background:#4f46e5;color:white;font-weight:900;padding:14px;margin-top:10px;cursor:pointer}.msg{min-height:20px;margin-top:12px;font-size:14px}.ok{color:#059669}.err{color:#dc2626}</style></head><body><main class="card"><div class="brand"><img class="logo" src="/logo.svg"><strong>Remy</strong></div><h1>Einloggen und Remy nutzen</h1><p>Dein Free-Limit, Plus-Status und deine Remy-Daten bleiben so deinem Konto zugeordnet.</p><div class="tabs"><button id="loginTab" class="active">Einloggen</button><button id="registerTab">Konto erstellen</button></div><input id="email" type="email" placeholder="E-Mail"><input id="password" type="password" placeholder="Passwort"><button id="submit" class="main">Einloggen</button><div id="msg" class="msg"></div></main><script>let mode='login';const d=${JSON.stringify(deviceId)};function q(id){return document.getElementById(id)}function setMode(m){mode=m;q('loginTab').classList.toggle('active',m==='login');q('registerTab').classList.toggle('active',m==='register');q('submit').textContent=m==='login'?'Einloggen':'Konto erstellen'}q('loginTab').onclick=()=>setMode('login');q('registerTab').onclick=()=>setMode('register');q('submit').onclick=async()=>{q('msg').textContent='Bitte warten…';q('msg').className='msg';try{const r=await fetch('/api/auth/'+(mode==='login'?'login':'register'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:q('email').value,password:q('password').value,deviceId:d})});const data=await r.json();if(!r.ok)throw new Error(data.error||'Fehler');q('msg').className='msg ok';q('msg').textContent='Fertig. Du kannst dieses Fenster schließen und Remy öffnen.'}catch(e){q('msg').className='msg err';q('msg').textContent=e.message||'Login kann nicht abgeschlossen werden.'}};</script></body></html>`; }

@@ -66,6 +66,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === 'REMY_GET_CHAT_STATE') return await getChatState(message.mode);
     if (message?.type === 'REMY_NEW_CHAT') return await newChat(message.mode);
     if (message?.type === 'REMY_SELECT_CHAT') return await selectChat(message.mode, message.chatId);
+    if (message?.type === 'REMY_DELETE_CHAT') return await deleteChat(message.mode, message.chatId);
     if (message?.type === 'REMY_SIDEBAR_ASK') return await askFromExtension(message.question, message.mode, sender.tab?.id, message.chatId);
     return { ok: false, error: 'Unbekannte Anfrage.' };
   };
@@ -161,6 +162,25 @@ async function selectChat(mode = 'local', chatId = '') {
   await saveChats(chats);
   return await getChatState(safeMode);
 }
+
+async function deleteChat(mode = 'local', chatId = '') {
+  const safeMode = mode === 'public' ? 'public' : 'local';
+  const chats = await loadChats();
+  const target = chats.items[chatId];
+  if (!target || target.mode !== safeMode) return await getChatState(safeMode);
+  delete chats.items[chatId];
+  const remaining = Object.values(chats.items).filter(c => c.mode === safeMode).sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  if (!remaining.length) {
+    const fresh = createChat(safeMode);
+    chats.items[fresh.id] = fresh;
+    chats.active[safeMode] = fresh.id;
+  } else if (chats.active[safeMode] === chatId) {
+    chats.active[safeMode] = remaining[0].id;
+  }
+  await saveChats(chats);
+  return await getChatState(safeMode);
+}
+
 async function appendToChat(mode, chatId, question, answer) {
   const safeMode = mode === 'public' ? 'public' : 'local';
   const chats = await loadChats();

@@ -282,7 +282,7 @@ setInterval(() => {
     .remy-radial-actions{position:absolute;right:0;bottom:0;width:190px;height:190px;pointer-events:none}.remy-radial-actions.hidden{display:none}.remy-action{position:absolute;width:72px;height:72px;border:0;border-radius:24px;color:white;font-size:12px;line-height:1.1;font-weight:950;box-shadow:0 18px 42px rgba(31,41,55,.25);cursor:pointer;pointer-events:auto;transition:.16s transform}.remy-action:hover{transform:translateY(-2px) scale(1.04)}.bubble-local{right:0;bottom:92px;background:#4f46e5}.bubble-public{right:78px;bottom:78px;background:#0891b2}.bubble-ignore{right:92px;bottom:0;background:#111827}
     .remy-side-panel{position:absolute;right:0;bottom:78px;width:348px;max-height:min(640px,calc(100vh - 118px));background:rgba(255,255,255,.98);backdrop-filter:blur(14px);border:1px solid rgba(124,58,237,.13);border-radius:28px;box-shadow:0 28px 90px rgba(31,41,55,.26);overflow:hidden;display:flex;flex-direction:column}.remy-side-panel.hidden{display:none}
     .remy-side-header{display:flex;align-items:center;justify-content:space-between;padding:14px 14px 10px}.remy-side-header>div{display:flex;align-items:center;gap:9px}.remy-side-header img{width:34px;height:34px}.remy-side-header strong{font-size:16px}.remy-side-header span{font-size:11px;font-weight:900;border-radius:999px;background:#ede9fe;color:#6d28d9;padding:4px 8px}.remy-side-header span.public{background:#cffafe;color:#0e7490}.remy-side-header button{border:0;background:#f3f4f6;border-radius:12px;width:30px;height:30px;cursor:pointer;font-size:18px;color:#4b5563}
-    .remy-chat-tools{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 14px 8px}.remy-chat-tools button{border:0;border-radius:14px;background:#f9fafb;color:#4b5563;font-size:12px;font-weight:900;padding:9px;cursor:pointer}.remy-chat-list{margin:0 14px 8px;background:white;border:1px solid #e5e7eb;border-radius:16px;padding:6px;box-shadow:0 12px 28px #0001;max-height:178px;overflow:auto}.remy-chat-list.hidden{display:none}.remy-chat-option{width:100%;border:0;background:transparent;text-align:left;padding:9px 10px;border-radius:12px;cursor:pointer;font-size:12px;color:#374151;font-weight:800}.remy-chat-option.active{background:#ede9fe;color:#5b21b6}.remy-mode-help{font-size:12px;color:#6b7280;margin:4px 16px 8px;line-height:1.35}.remy-side-usage{font-size:12px;font-weight:800;color:#4b5563;background:#f9fafb;border-top:1px solid #f3f4f6;border-bottom:1px solid #f3f4f6;padding:9px 16px}
+    .remy-chat-tools{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 14px 8px}.remy-chat-tools button{border:0;border-radius:14px;background:#f9fafb;color:#4b5563;font-size:12px;font-weight:900;padding:9px;cursor:pointer}.remy-chat-list{margin:0 14px 8px;background:white;border:1px solid #e5e7eb;border-radius:16px;padding:6px;box-shadow:0 12px 28px #0001;max-height:178px;overflow:auto}.remy-chat-list.hidden{display:none}.remy-chat-option{width:100%;border:0;background:transparent;text-align:left;padding:9px 10px;border-radius:12px;cursor:pointer;font-size:12px;color:#374151;font-weight:800}.remy-chat-option.active{background:#ede9fe;color:#5b21b6}.remy-chat-row{display:flex;align-items:center;gap:6px;border-radius:12px}.remy-chat-row.active{background:#ede9fe}.remy-chat-row .remy-chat-option{flex:1}.remy-chat-delete{border:0;background:#fee2e2;color:#b91c1c;border-radius:10px;width:28px;height:28px;font-weight:900;cursor:pointer}.remy-mode-help{font-size:12px;color:#6b7280;margin:4px 16px 8px;line-height:1.35}.remy-side-usage{font-size:12px;font-weight:800;color:#4b5563;background:#f9fafb;border-top:1px solid #f3f4f6;border-bottom:1px solid #f3f4f6;padding:9px 16px}
     .remy-side-messages{padding:14px;overflow:auto;display:flex;flex-direction:column;gap:10px;min-height:170px}.remy-bubble{border-radius:18px;padding:11px 12px;line-height:1.42;font-size:13px;white-space:pre-wrap}.remy-bot{background:#f3f4f6}.remy-user{background:#4f46e5;color:white;align-self:flex-end;max-width:84%}.remy-bot.public{background:#ecfeff}.remy-bot.local{background:#f5f3ff}.remy-source{font-size:12px;border:1px solid #e5e7eb;border-radius:14px;padding:8px;margin-top:7px;background:white}.remy-source a{color:#2563eb!important;font-weight:900;text-decoration:underline!important;word-break:break-word}
     .remy-side-form{display:flex;gap:8px;padding:12px;border-top:1px solid #f3f4f6;background:white}.remy-side-form textarea{flex:1;border:1px solid #e5e7eb;border-radius:18px;padding:11px;resize:none;font:inherit;font-size:13px;outline:none;max-height:92px}.remy-side-form textarea:focus{border-color:#a78bfa;box-shadow:0 0 0 4px #ede9fe}.remy-side-form button{width:44px;border:0;border-radius:17px;background:#111827;color:white;font-weight:900;cursor:pointer}`;
   document.documentElement.appendChild(style);
@@ -347,7 +347,7 @@ setInterval(() => {
   function updateUsage(usage) {
     if (!usage) return;
     const remaining = usage.remaining === null || usage.remaining === undefined ? usage.limit - usage.used : usage.remaining;
-    $r('remy-side-usage').textContent = `${Math.max(0, remaining)} von ${usage.limit} Anfragen übrig · ${usage.plan === 'free' ? 'Free' : usage.plan}`;
+    $r('remy-side-usage').textContent = `${Math.max(0, remaining)} von ${usage.limit} Anfragen übrig · ${usage.plan === 'free' ? 'Free' : (usage.plan === 'lifetime' ? 'Remy Lifetime' : 'Remy Unlimited')}`;
   }
   async function ask() {
     const input = $r('remy-side-input');
@@ -397,11 +397,18 @@ setInterval(() => {
   function renderChatList() {
     const list = $r('remy-chat-list');
     const chats = chatState.chats || [];
-    list.innerHTML = chats.length ? chats.slice(0, 6).map(c => `<button type="button" class="remy-chat-option ${c.id === activeChatId ? 'active' : ''}" data-id="${escapeAttr(c.id)}">${escapeHtml(c.title || (mode === 'public' ? 'Allgemeiner Chat' : 'Browser-Chat'))}</button>`).join('') : '<div class="remy-chat-option">Noch kein Chat</div>';
+    list.innerHTML = chats.length ? chats.slice(0, 6).map(c => `<div class="remy-chat-row ${c.id === activeChatId ? 'active' : ''}"><button type="button" class="remy-chat-option" data-id="${escapeAttr(c.id)}">${escapeHtml(c.title || (mode === 'public' ? 'Allgemeiner Chat' : 'Browser-Chat'))}</button><button type="button" class="remy-chat-delete" data-id="${escapeAttr(c.id)}" title="Chat löschen">×</button></div>`).join('') : '<div class="remy-chat-option">Noch kein Chat</div>';
     list.querySelectorAll('.remy-chat-option[data-id]').forEach(btn => btn.onclick = () => {
       const id = btn.dataset.id;
       chrome.runtime.sendMessage({ type: 'REMY_SELECT_CHAT', mode, chatId: id }, (r) => {
         if (r?.ok) { chatState = r; activeChatId = r.activeChatId; renderChatList(); $r('remy-chat-list').classList.add('hidden'); resetChatWindow(); }
+      });
+    });
+    list.querySelectorAll('.remy-chat-delete[data-id]').forEach(btn => btn.onclick = (event) => {
+      event.stopPropagation();
+      if (!confirm('Diesen Chat löschen?')) return;
+      chrome.runtime.sendMessage({ type: 'REMY_DELETE_CHAT', mode, chatId: btn.dataset.id }, (r) => {
+        if (r?.ok) { chatState = r; activeChatId = r.activeChatId; renderChatList(); resetChatWindow(); }
       });
     });
   }

@@ -13,3 +13,5 @@ create table if not exists remy_usage (
   used integer not null default 0,
   primary key (user_id, month)
 );
+
+alter table remy_users add column if not exists stripe_subscription_id text;
