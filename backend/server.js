@@ -161,32 +161,6 @@ app.post('/api/create-checkout-session', requireUser, async (req, res) => {
   res.json({ ok: true, url: session.url });
 });
 
-app.post('/api/create-customer-portal-session', requireUser, async (req, res) => {
-  try {
-    if (!stripe) return res.status(400).json({ error: 'Stripe ist noch nicht eingerichtet.' });
-    let customerId = req.user.stripe_customer_id || '';
-
-    // Falls der Nutzer bezahlt hat, aber die Customer-ID nicht gespeichert wurde,
-    // versuchen wir sie sicher über die E-Mail im Stripe-Test/Live-Konto zu finden.
-    if (!customerId && req.user.email) {
-      const customers = await stripe.customers.list({ email: req.user.email, limit: 1 });
-      customerId = customers.data?.[0]?.id || '';
-      if (customerId) await updateUserFields(req.user.id, { stripe_customer_id: customerId });
-    }
-
-    if (!customerId) return res.status(400).json({ error: 'Für dieses Konto wurde noch kein Stripe-Abo gefunden.' });
-
-    const session = await stripe.billingPortal.sessions.create({
-      customer: customerId,
-      return_url: `${publicBaseUrl}/auth?portal=return`
-    });
-    res.json({ ok: true, url: session.url });
-  } catch (error) {
-    console.error('Customer portal error:', error);
-    res.status(500).json({ error: 'Abo-Verwaltung konnte nicht geöffnet werden.' });
-  }
-});
-
 app.listen(port, () => console.log(`Remy backend läuft auf Port ${port}`));
 
 function signToken(user) { return jwt.sign({ sub: user.id, email: user.email }, authSecret, { expiresIn: '90d' }); }
@@ -250,23 +224,6 @@ async function createUser(email, password_hash) {
   }
   const s = await readStore(); s.users[user.id] = user; await writeStore(s); return user;
 }
-
-async function updateUserFields(id, fields) {
-  const safeFields = { ...fields };
-  delete safeFields.id;
-  delete safeFields.email;
-  if (supabase) {
-    const { data, error } = await supabase.from('remy_users').update(safeFields).eq('id', id).select('*').single();
-    if (error) throw new Error(`Supabase Nutzer aktualisieren fehlgeschlagen: ${error.message}`);
-    return data;
-  }
-  const store = await readStore();
-  if (!store.users[id]) return null;
-  store.users[id] = { ...store.users[id], ...safeFields };
-  await writeStore(store);
-  return store.users[id];
-}
-
 async function deleteUser(id) {
   if (supabase) {
     let { error } = await supabase.from('remy_usage').delete().eq('user_id', id);
