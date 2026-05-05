@@ -103,17 +103,9 @@ app.post('/api/auth/request-password-reset', async (req, res) => {
 
 app.get('/api/auth/me', requireUser, async (req, res) => res.json({ ok: true, user: publicUser(req.user), usage: publicUsage(await getUsage(req.user.id, req.user.plan), req.user.plan, await hasFreeTrialAvailable(req.user.id, req.user.plan)) }));
 app.post('/api/auth/delete', requireUser, async (req, res) => {
-  try {
-    const deletionCheck = await canDeleteAccount(req.user);
-    if (!deletionCheck.ok) {
-      return res.status(400).json({ error: deletionCheck.error || 'Du hast noch ein aktives Abo. Bitte kündige es zuerst über Stripe.' });
-    }
-    await deleteUser(req.user.id);
-    res.json({ ok: true });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Konto konnte gerade nicht gelöscht werden.' });
-  }
+  if (req.user.plan === 'plus' || req.user.plan === 'lifetime') return res.status(400).json({ error: 'Du hast einen aktiven Plan. Bitte verwalte oder kündige ihn zuerst über Stripe.' });
+  await deleteUser(req.user.id);
+  res.json({ ok: true });
 });
 
 app.get('/api/usage', requireUser, async (req, res) => res.json({ ok: true, usage: publicUsage(await getUsage(req.user.id, req.user.plan), req.user.plan, await hasFreeTrialAvailable(req.user.id, req.user.plan)) }));
@@ -162,49 +154,36 @@ app.post('/api/create-checkout-session', requireUser, async (req, res) => {
     if (stripePaymentLink) return res.json({ ok: true, url: stripePaymentLink });
     return res.status(400).json({ error: 'Stripe ist noch nicht vollständig eingerichtet.' });
   }
-  const sessionPayload = {
-    mode: 'subscription',
-    line_items: [{ price: stripePriceId, quantity: 1 }],
-    customer_email: req.user.email,
-    client_reference_id: req.user.id,
-    success_url: `${publicBaseUrl}/auth?success=plus`,
-    cancel_url: `${publicBaseUrl}/auth?cancel=1`,
-    metadata: { remy_user_id: req.user.id },
-    subscription_data: { metadata: { remy_user_id: req.user.id } }
-  };
-  if (req.user.stripe_customer_id) sessionPayload.customer = req.user.stripe_customer_id;
-  const session = await stripe.checkout.sessions.create(sessionPayload);
+  const session = await stripe.checkout.sessions.create({
+    mode: 'subscription', line_items: [{ price: stripePriceId, quantity: 1 }], customer_email: req.user.email,
+    success_url: `${publicBaseUrl}/auth?success=plus`, cancel_url: `${publicBaseUrl}/auth?cancel=1`, metadata: { remy_user_id: req.user.id }
+  });
   res.json({ ok: true, url: session.url });
 });
 
 app.post('/api/create-customer-portal-session', requireUser, async (req, res) => {
   try {
     if (!stripe) return res.status(400).json({ error: 'Stripe ist noch nicht eingerichtet.' });
-    if (!req.user.stripe_customer_id) return res.status(400).json({ error: 'Für dieses Konto wurde noch kein Stripe-Kunde gefunden.' });
-    const portal = await stripe.billingPortal.sessions.create({
-      customer: req.user.stripe_customer_id,
-      return_url: `${publicBaseUrl}/auth?portal=done`
+    let customerId = req.user.stripe_customer_id || '';
+
+    // Falls der Nutzer bezahlt hat, aber die Customer-ID nicht gespeichert wurde,
+    // versuchen wir sie sicher über die E-Mail im Stripe-Test/Live-Konto zu finden.
+    if (!customerId && req.user.email) {
+      const customers = await stripe.customers.list({ email: req.user.email, limit: 1 });
+      customerId = customers.data?.[0]?.id || '';
+      if (customerId) await updateUserFields(req.user.id, { stripe_customer_id: customerId });
+    }
+
+    if (!customerId) return res.status(400).json({ error: 'Für dieses Konto wurde noch kein Stripe-Abo gefunden.' });
+
+    const session = await stripe.billingPortal.sessions.create({
+      customer: customerId,
+      return_url: `${publicBaseUrl}/auth?portal=return`
     });
-    res.json({ ok: true, url: portal.url });
+    res.json({ ok: true, url: session.url });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Abo-Verwaltung konnte gerade nicht geöffnet werden.' });
-  }
-});
-
-app.get('/api/stripe/webhook', (_req, res) => {
-  res.json({ ok: true, message: 'Stripe webhook endpoint bereit. Stripe sendet hier per POST.' });
-});
-
-app.post('/api/stripe/webhook', async (req, res) => {
-  try {
-    const event = req.body;
-    if (!event?.type) return res.status(400).json({ error: 'Stripe Event fehlt.' });
-    await handleStripeEvent(event);
-    res.json({ received: true });
-  } catch (error) {
-    console.error('Stripe webhook error:', error);
-    res.status(500).json({ error: 'Stripe Webhook konnte nicht verarbeitet werden.' });
+    console.error('Customer portal error:', error);
+    res.status(500).json({ error: 'Abo-Verwaltung konnte nicht geöffnet werden.' });
   }
 });
 
@@ -239,126 +218,6 @@ function planLimit(plan) { return plan === 'lifetime' ? lifetimeLimit : plan ===
 function displayPlan(plan = 'free') { return plan === 'lifetime' ? 'Remy Lifetime' : plan === 'plus' ? paidPlanName : 'Remy Free'; }
 function publicUsage(usage, plan = usage.plan, trialAvailable = false) { const limit = planLimit(plan); const used = Number(usage.used || 0); return { plan: plan || 'free', planName: displayPlan(plan), used, limit, remaining: Math.max(0, limit - used), period: usage.month || usagePeriod(plan), resetLabel: resetLabel(plan), plusPrice, trialAvailable: Boolean(trialAvailable) }; }
 function publicUser(user) { return { id: user.id, email: user.email, plan: user.plan || 'free' }; }
-
-function isCanceledStatus(status) {
-  return ['canceled', 'cancelled', 'incomplete_expired', 'free'].includes(String(status || '').toLowerCase());
-}
-
-async function canDeleteAccount(user) {
-  const plan = user?.plan || 'free';
-  if (plan === 'free') return { ok: true };
-  if (plan === 'lifetime') return { ok: true };
-
-  if (user?.cancel_at_period_end === true || String(user?.cancel_at_period_end) === 'true') return { ok: true };
-  if (isCanceledStatus(user?.subscription_status)) return { ok: true };
-
-  if (stripe && user?.stripe_subscription_id) {
-    try {
-      const sub = await stripe.subscriptions.retrieve(user.stripe_subscription_id);
-      if (sub?.cancel_at_period_end || isCanceledStatus(sub?.status)) return { ok: true };
-      return { ok: false, error: 'Dein Remy-Unlimited-Abo ist noch aktiv. Bitte kündige es zuerst über „Abo verwalten“. Danach kannst du dein Konto löschen.' };
-    } catch (error) {
-      // Wenn Stripe die Subscription nicht mehr kennt, blockieren wir nicht dauerhaft.
-      if (String(error?.message || '').toLowerCase().includes('no such subscription')) return { ok: true };
-      throw error;
-    }
-  }
-
-  return { ok: false, error: 'Dein Remy-Unlimited-Abo ist noch aktiv. Bitte kündige es zuerst über „Abo verwalten“. Danach kannst du dein Konto löschen.' };
-}
-
-async function handleStripeEvent(event) {
-  const obj = event.data?.object || {};
-  if (event.type === 'checkout.session.completed') {
-    const userId = obj.metadata?.remy_user_id || obj.client_reference_id || obj.subscription?.metadata?.remy_user_id;
-    if (!userId) return;
-    let subscriptionStatus = 'active';
-    let cancelAtPeriodEnd = false;
-    let currentPeriodEnd = null;
-    if (stripe && obj.subscription) {
-      try {
-        const sub = await stripe.subscriptions.retrieve(obj.subscription);
-        subscriptionStatus = sub.status || subscriptionStatus;
-        cancelAtPeriodEnd = Boolean(sub.cancel_at_period_end);
-        currentPeriodEnd = sub.current_period_end ? new Date(sub.current_period_end * 1000).toISOString() : null;
-      } catch {}
-    }
-    await updateUserBilling(userId, {
-      plan: 'plus',
-      stripe_customer_id: obj.customer || null,
-      stripe_subscription_id: obj.subscription || null,
-      subscription_status: subscriptionStatus,
-      cancel_at_period_end: cancelAtPeriodEnd,
-      current_period_end: currentPeriodEnd
-    });
-    return;
-  }
-
-  if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') {
-    const sub = obj;
-    const userId = sub.metadata?.remy_user_id || await findUserIdByStripeSubscription(sub.id) || await findUserIdByStripeCustomer(sub.customer);
-    if (!userId) return;
-    const status = event.type === 'customer.subscription.deleted' ? 'canceled' : (sub.status || 'active');
-    const canceled = event.type === 'customer.subscription.deleted' || Boolean(sub.cancel_at_period_end) || isCanceledStatus(status);
-    await updateUserBilling(userId, {
-      plan: canceled && event.type === 'customer.subscription.deleted' ? 'free' : 'plus',
-      stripe_customer_id: sub.customer || null,
-      stripe_subscription_id: sub.id || null,
-      subscription_status: status,
-      cancel_at_period_end: Boolean(sub.cancel_at_period_end) || event.type === 'customer.subscription.deleted',
-      current_period_end: sub.current_period_end ? new Date(sub.current_period_end * 1000).toISOString() : null
-    });
-    return;
-  }
-
-  if (event.type === 'invoice.payment_succeeded') {
-    const invoice = obj;
-    const userId = await findUserIdByStripeSubscription(invoice.subscription) || await findUserIdByStripeCustomer(invoice.customer);
-    if (!userId) return;
-    await updateUserBilling(userId, {
-      plan: 'plus',
-      stripe_customer_id: invoice.customer || null,
-      stripe_subscription_id: invoice.subscription || null,
-      subscription_status: 'active',
-      cancel_at_period_end: false
-    });
-  }
-}
-
-async function updateUserBilling(userId, patch) {
-  if (!userId) return;
-  if (supabase) {
-    const clean = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
-    const { error } = await supabase.from('remy_users').update(clean).eq('id', userId);
-    if (error) throw new Error(`Supabase Billing speichern fehlgeschlagen: ${error.message}`);
-    return;
-  }
-  const s = await readStore();
-  if (s.users[userId]) s.users[userId] = { ...s.users[userId], ...patch };
-  await writeStore(s);
-}
-
-async function findUserIdByStripeSubscription(subscriptionId) {
-  if (!subscriptionId) return null;
-  if (supabase) {
-    const { data, error } = await supabase.from('remy_users').select('id').eq('stripe_subscription_id', subscriptionId).maybeSingle();
-    if (error) throw new Error(`Supabase Subscription-Nutzer suchen fehlgeschlagen: ${error.message}`);
-    return data?.id || null;
-  }
-  const s = await readStore();
-  return Object.values(s.users || {}).find(u => u.stripe_subscription_id === subscriptionId)?.id || null;
-}
-
-async function findUserIdByStripeCustomer(customerId) {
-  if (!customerId) return null;
-  if (supabase) {
-    const { data, error } = await supabase.from('remy_users').select('id').eq('stripe_customer_id', customerId).maybeSingle();
-    if (error) throw new Error(`Supabase Customer-Nutzer suchen fehlgeschlagen: ${error.message}`);
-    return data?.id || null;
-  }
-  const s = await readStore();
-  return Object.values(s.users || {}).find(u => u.stripe_customer_id === customerId)?.id || null;
-}
 function normalizeEmail(email) { return String(email || '').trim().toLowerCase(); }
 function safeId(v) { return String(v || '').replace(/[^a-zA-Z0-9._:-]/g, '').slice(0, 160); }
 function clip(value, max) { return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max); }
@@ -391,23 +250,32 @@ async function createUser(email, password_hash) {
   }
   const s = await readStore(); s.users[user.id] = user; await writeStore(s); return user;
 }
+
+async function updateUserFields(id, fields) {
+  const safeFields = { ...fields };
+  delete safeFields.id;
+  delete safeFields.email;
+  if (supabase) {
+    const { data, error } = await supabase.from('remy_users').update(safeFields).eq('id', id).select('*').single();
+    if (error) throw new Error(`Supabase Nutzer aktualisieren fehlgeschlagen: ${error.message}`);
+    return data;
+  }
+  const store = await readStore();
+  if (!store.users[id]) return null;
+  store.users[id] = { ...store.users[id], ...safeFields };
+  await writeStore(store);
+  return store.users[id];
+}
+
 async function deleteUser(id) {
   if (supabase) {
-    for (const table of ['remy_memories', 'remy_free_trials', 'remy_usage']) {
-      const { error } = await supabase.from(table).delete().eq('user_id', id);
-      if (error && !String(error.message || '').toLowerCase().includes('does not exist')) {
-        throw new Error(`Supabase ${table} löschen fehlgeschlagen: ${error.message}`);
-      }
-    }
-    const { error } = await supabase.from('remy_users').delete().eq('id', id);
+    let { error } = await supabase.from('remy_usage').delete().eq('user_id', id);
+    if (error) throw new Error(`Supabase Nutzung löschen fehlgeschlagen: ${error.message}`);
+    ({ error } = await supabase.from('remy_users').delete().eq('id', id));
     if (error) throw new Error(`Supabase Konto löschen fehlgeschlagen: ${error.message}`);
     return;
   }
-  const s = await readStore();
-  delete s.users[id];
-  s.usage = Object.fromEntries(Object.entries(s.usage || {}).filter(([key]) => !key.startsWith(`${id}:`)));
-  if (s.freeTrials) delete s.freeTrials[id];
-  await writeStore(s);
+  const s = await readStore(); delete s.users[id]; delete s.usage[id]; await writeStore(s);
 }
 
 async function hasFreeTrialAvailable(userId, plan = 'free') {

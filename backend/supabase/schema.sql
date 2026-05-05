@@ -23,9 +23,3 @@ create table if not exists remy_free_trials (
   used boolean not null default false,
   used_at timestamptz
 );
-
--- Remy 40: Stripe-Abo-Status für sichere Konto-Löschung und Abo-Verwaltung
-alter table if exists remy_users add column if not exists stripe_subscription_id text;
-alter table if exists remy_users add column if not exists subscription_status text not null default 'free';
-alter table if exists remy_users add column if not exists cancel_at_period_end boolean not null default false;
-alter table if exists remy_users add column if not exists current_period_end timestamptz;
