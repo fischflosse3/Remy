@@ -259,7 +259,7 @@ setInterval(() => {
         <div><img src="${chrome.runtime.getURL('logo.svg')}" alt=""><strong>Remy</strong><span id="remy-side-mode-label">Browser</span></div>
         <button id="remy-side-close">×</button>
       </header>
-      <p id="remy-mode-help" class="remy-mode-help">Browser-Suche nutzt nur deine gespeicherten Seiten und sichere aktuelle Inhalte.</p>
+      <p id="remy-mode-help" class="remy-mode-help">Browser-Suche nutzt gespeicherte Seiten und aktuell offene Tabs (Titel + URL).</p>
       <div id="remy-side-usage" class="remy-side-usage">Anfragen werden geladen…</div><button id="remy-clear-chat" class="remy-clear-chat" type="button">Chatinhalt löschen</button>
       <div id="remy-side-messages" class="remy-side-messages"></div>
       <form id="remy-side-form" class="remy-side-form">
@@ -324,7 +324,7 @@ setInterval(() => {
     $r('remy-side-mode-label').textContent = mode === 'public' ? 'Allgemein' : 'Browser';
     $r('remy-side-panel').classList.toggle('public-mode', mode === 'public');
     $r('remy-side-panel').classList.toggle('local-mode', mode === 'local');
-    $r('remy-mode-help').textContent = mode === 'public' ? 'Allgemein fragen nutzt KI-Wissen. Keine privaten Daten eingeben.' : 'Browser-Suche nutzt nur deine gespeicherten Seiten und sichere aktuelle Inhalte.';
+    $r('remy-mode-help').textContent = mode === 'public' ? 'Allgemein fragen nutzt KI-Wissen. Keine privaten Daten eingeben.' : 'Browser-Suche nutzt gespeicherte Seiten und aktuell offene Tabs (Titel + URL).';
     $r('remy-side-input').placeholder = mode === 'public' ? 'Allgemein fragen…' : 'Browser suchen…';
     renderHistory();
     refreshUsage();

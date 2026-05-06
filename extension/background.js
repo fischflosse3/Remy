@@ -102,11 +102,12 @@ async function askFromExtension(question, mode = 'local', tabId = null) {
   const safeMode = mode === 'public' ? 'public' : 'local';
   let memories = [];
   if (safeMode === 'local') {
-    const live = await getLivePage(tabId);
     const { omni_pages = [] } = await storageGet(['omni_pages']);
-    const ranked = rankPages(question, live?.safe ? [live.page, ...omni_pages] : omni_pages, 8);
+    const openTabs = await getOpenTabsForContext();
+    const combined = [...openTabs, ...omni_pages];
+    const ranked = rankPages(question, combined, 10);
     memories = ranked.map(compactMemory);
-    if (!memories.length) return { ok: false, error: 'Ich habe noch keine passende lokale Erinnerung. Öffne eine normale Seite und warte kurz.' };
+    if (!memories.length) return { ok: false, error: 'Ich finde gerade keine passenden gespeicherten Seiten oder offenen Tabs.' };
   }
   const res = await fetch(`${getBackendUrl()}/api/ask`, { method: 'POST', headers: authHeaders(authState.auth.token), body: JSON.stringify({ question, mode: safeMode, memories, language: 'de' }) });
   const data = await res.json().catch(() => ({}));
@@ -115,6 +116,39 @@ async function askFromExtension(question, mode = 'local', tabId = null) {
   return { ok: true, answer: data.answer, usage: data.usage, sources: safeMode === 'local' ? memories.slice(0, 5) : [] };
 }
 
+async function getOpenTabsForContext() {
+  const tabs = await chrome.tabs.query({ currentWindow: true });
+  const { omni_settings } = await storageGet(['omni_settings']);
+  const settings = mergeSettings(omni_settings);
+  return tabs
+    .filter(tab => /^https?:\/\//.test(tab.url || ''))
+    .map(tab => makeOpenTabMemory(tab))
+    .filter(page => !shouldSkipPage(page, settings))
+    .slice(0, 40);
+}
+
+function makeOpenTabMemory(tab) {
+  const url = tab.url || '';
+  const domain = safeDomain(url);
+  const title = clip(tab.title || domain || 'Geöffneter Tab', 180);
+  return {
+    id: `open-tab-${tab.id || simpleHash(url)}`,
+    sourceType: 'open_tab',
+    title,
+    url,
+    domain,
+    description: '',
+    headings: '',
+    text: '',
+    summary: 'Aktuell geöffneter Tab. Es wurden nur Titel und URL verwendet; der Seiteninhalt wurde nicht ausgelesen.',
+    keywords: getKeywords(`${title} ${domain} ${extractSearchQuery(url)}`),
+    searchQuery: extractSearchQuery(url),
+    platform: 'open-tab-metadata',
+    media: {},
+    language: {},
+    savedAt: 'aktuell geöffnet'
+  };
+}
 async function getLivePage(tabId = null) { let tab; if (tabId) tab = { id: tabId }; else [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); if (!tab?.id) return { safe: false, reason: 'Keine aktive Seite.' }; let response; try { response = await chrome.tabs.sendMessage(tab.id, { type: 'OMNI_EXTRACT_NOW' }); } catch { return { safe: false, reason: 'Diese Seite ist noch nicht bereit.' }; } if (!response?.ok || !response.page) return { safe: false, reason: response?.error || 'Keine lesbaren Inhalte.' }; const { omni_settings } = await storageGet(['omni_settings']); const settings = mergeSettings(omni_settings); const skip = shouldSkipPage(response.page, settings); if (skip) return { safe: false, reason: humanSkipReason(skip) }; const page = cleanPage(response.page, { url: response.page.url, title: response.page.title }); await saveCleanPage(page, { allowRecentDuplicate: true }); return { safe: true, page }; }
 async function blockCurrentSite(deleteExisting = false) { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); const d = tab?.url ? safeDomain(tab.url) : ''; if (!d) return { ok: false, error: 'Keine Website erkannt.' }; return addIgnoredDomain(d, deleteExisting); }
 async function getCurrentSiteMemoryStatus(url = '') {
@@ -156,9 +190,9 @@ function cleanPage(raw, tab = {}) { const url = raw.url || tab.url || ''; return
 function shouldSkipPage(page, settings) { if (!page?.url) return 'no_url'; const url = page.url.toLowerCase(); const domain = cleanDomain(page.domain || safeDomain(page.url)); if ((settings.ignoredDomains || []).some(d => domain === d || domain.endsWith(`.${d}`))) return 'ignored_domain'; if (page.hasPasswordField && settings.blockedCategories.logins) return 'password_page'; for (const [cat, words] of Object.entries(CATEGORY_RULES)) { if (settings.blockedCategories?.[cat] === false) continue; if (words.some(w => url.includes(w) || domain.includes(w))) return cat; } return ''; }
 function humanSkipReason(r) { return ({ banking:'Banking/Finanzen geschützt.', payments:'Zahlungsseite geschützt.', email:'E-Mail-Bereich geschützt.', dating:'Dating-Seite geschützt.', adult:'Erwachsene Inhalte geschützt.', medical:'Gesundheit/Medizin geschützt.', logins:'Login/Account geschützt.', password_page:'Passwortseite geschützt.', ignored_domain:'Website ist ignoriert.' }[r] || 'Diese Seite wird geschützt.'); }
 function rankPages(q, pages, limit) { const kws = getKeywords(q); return pages.map((p,i)=>({p,score:scorePage(p,kws,i)})).sort((a,b)=>b.score-a.score).slice(0,limit).map(x=>x.p); }
-function scorePage(p,kws,i){ const hay = `${p.title} ${p.domain} ${p.searchQuery} ${p.summary} ${p.text}`.toLowerCase(); let s = Math.max(0, 6 - i * .05); kws.forEach(k=>{ if(hay.includes(k)) s += 4; if(String(p.title||'').toLowerCase().includes(k)) s += 7; }); return s; }
+function scorePage(p,kws,i){ const hay = `${p.title} ${p.domain} ${p.url} ${p.searchQuery} ${p.summary} ${p.text}`.toLowerCase(); const asksForOpenTabs = kws.some(k => ['tab','tabs','offen','offene','geöffnet','geoeffnet','link','links','seite','seiten'].includes(k)); let s = Math.max(0, 6 - i * .05); if(p.sourceType === 'open_tab' && asksForOpenTabs) s += 8; kws.forEach(k=>{ if(hay.includes(k)) s += 4; if(String(p.title||'').toLowerCase().includes(k)) s += 7; if(String(p.domain||'').toLowerCase().includes(k)) s += 5; }); return s; }
 function getKeywords(t){ return [...new Set(String(t||'').toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu,' ').split(/\s+/).filter(w=>w.length>2&&!STOPWORDS.has(w)))].slice(0,24); }
-function compactMemory(p){ return { title:p.title, url:p.url, domain:p.domain, savedAt:p.savedAt, searchQuery:p.searchQuery, summary:p.summary, text:p.text, platform:p.platform, media:p.media, language:p.language, keywords:p.keywords }; }
+function compactMemory(p){ return { sourceType:p.sourceType || 'saved_page', title:p.title, url:p.url, domain:p.domain, savedAt:p.savedAt, searchQuery:p.searchQuery, summary:p.summary, text:p.text, platform:p.platform, media:p.media, language:p.language, keywords:p.keywords }; }
 function summarize(p){ const parts=[p.description,p.headings,p.text].filter(Boolean).join(' '); return clip(parts,260); }
 function keywords(p){ return getKeywords(`${p.title} ${p.description} ${p.headings} ${p.text}`).slice(0,18); }
 function extractSearchQuery(url){ try{ const u=new URL(url); return u.searchParams.get('q')||u.searchParams.get('query')||u.searchParams.get('search_query')||''; }catch{return ''} }

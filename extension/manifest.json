@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Remy",
-  "version": "0.9.0",
-  "description": "Remy merkt sich hilfreiche Browserseiten, YouTube-Videos und dynamische Inhalte automatisch, schützt sensible Seiten und hilft dir, sie mit Links wiederzufinden.",
+  "name": "Remy Tab AI",
+  "version": "0.9.1",
+  "description": "Remy Tab AI merkt sich hilfreiche Browserseiten, schützt sensible Bereiche und hilft dir, gespeicherte oder aktuell offene Tabs mit KI und Links wiederzufinden.",
   "permissions": [
     "storage",
     "tabs",
@@ -18,7 +18,7 @@
     "https://remy-backend-uqrf.onrender.com/*"
   ],
   "action": {
-    "default_title": "Remy",
+    "default_title": "Remy Tab AI",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",

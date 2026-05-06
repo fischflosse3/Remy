@@ -1,5 +1,5 @@
-<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Remy</title><link rel="stylesheet" href="styles.css"></head><body><main class="app">
-  <header class="topbar"><div class="brand"><img src="logo.svg" class="logo" alt=""><div><strong>Remy</strong><span>dein Browser erinnert sich</span></div></div><button id="toggleAuto" class="switch"><span></span></button></header>
+<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Remy Tab AI</title><link rel="stylesheet" href="styles.css"></head><body><main class="app">
+  <header class="topbar"><div class="brand"><img src="logo.svg" class="logo" alt=""><div><strong>Remy Tab AI</strong><span>dein Browser erinnert sich</span></div></div><button id="toggleAuto" class="switch"><span></span></button></header>
 
   <section id="loginGate" class="login-gate hidden"><img src="logo.svg" alt=""><h1>Bitte melde dich an.</h1><p>So bleiben deine Anfragen, dein Unlimited-Status und deine Remy-Daten deinem Konto zugeordnet.</p><button id="loginNow" class="primary-btn">Im Browser anmelden</button><small>Du wirst auf eine sichere Remy-Seite weitergeleitet.</small></section>
 
@@ -8,7 +8,7 @@
 
     <section id="tutorialCard" class="tutorial-card hidden"><div class="tutorial-head"><img src="logo.svg" alt=""><div><strong>Kurzer Start mit Remy</strong><p>Teste deine erste Anfrage kostenlos ohne Verlust.</p></div></div><div class="tutorial-steps"><div><b>1</b><span><strong>Browser suchen</strong> findet Tabs, Seiten und Recherchen, die Remy gemerkt hat.</span></div><div><b>2</b><span><strong>Allgemein fragen</strong> ist für normale KI-Anfragen ohne Browser-Erinnerungen.</span></div><div><b>3</b><span>In den Einstellungen bestimmst du, welche Seiten nie gemerkt werden.</span></div></div><button id="dismissTutorial" class="secondary-btn">Verstanden</button></section>
 
-    <section class="mode-card"><button id="modeLocal" class="mode-btn active">Browser suchen</button><button id="modePublic" class="mode-btn">Allgemein fragen</button><p id="modeHelp">Browser-Suche nutzt nur deine gespeicherten Seiten.</p></section>
+    <section class="mode-card"><button id="modeLocal" class="mode-btn active">Browser suchen</button><button id="modePublic" class="mode-btn">Allgemein fragen</button><p id="modeHelp">Browser-Suche nutzt gespeicherte Seiten und aktuell offene Tabs.</p></section>
 
     <section class="usage-card"><div class="usage-top"><div><strong id="planName">Remy Free</strong><p id="usageText">7 kostenlose Anfragen pro Woche.</p></div><button id="upgradeBtn" class="upgrade-btn">Upgrade</button></div><div class="usage-bar"><span id="usageBar"></span></div></section>
 
@@ -21,6 +21,7 @@
     </div></section>
 
     <section class="memories-card"><div class="section-head"><h2>Gemerkte Seiten</h2><button id="clearAll" class="tiny-danger">alle löschen</button></div><div id="memories" class="memories"></div></section>
+    <footer class="legal-footer"><button id="openPrivacy" type="button">Datenschutz</button><span>·</span><button id="openImprint" type="button">Impressum</button></footer>
   </section>
 </main>
 <div id="deleteModal" class="remy-modal hidden" role="dialog" aria-modal="true" aria-labelledby="deleteTitle">
