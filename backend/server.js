@@ -160,7 +160,7 @@ app.post('/api/create-checkout-session', requireUser, async (req, res) => {
     if (stripePaymentLink) return res.json({ ok: true, url: stripePaymentLink });
     return res.status(400).json({ error: 'Stripe ist noch nicht vollständig eingerichtet.' });
   }
-  const customerId = await getOrCreateStripeCustomerId(req.user, true);
+  const customerId = await getOrCreateStripeCustomerId(req.user, true, { lookupByEmail: false });
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
     line_items: [{ price: stripePriceId, quantity: 1 }],
@@ -193,12 +193,16 @@ app.post('/api/create-customer-portal-session', requireUser, async (req, res) =>
 app.listen(port, () => console.log(`Remy backend läuft auf Port ${port}`));
 
 
-async function getOrCreateStripeCustomerId(user, createIfMissing = false) {
+async function getOrCreateStripeCustomerId(user, createIfMissing = false, options = {}) {
   if (!stripe) return '';
+  const lookupByEmail = options.lookupByEmail ?? !createIfMissing;
   let customerId = user.stripe_customer_id || '';
   if (customerId) return customerId;
 
-  if (user.email) {
+  // Für Checkout erstellen wir bewusst einen neuen Stripe-Customer, falls der Account
+  // noch keinen hat. Sonst kann ein neu erstelltes Konto versehentlich einen alten,
+  // bereits gekündigten Customer derselben E-Mail weiterverwenden.
+  if (lookupByEmail && user.email) {
     const customers = await stripe.customers.list({ email: user.email, limit: 1 });
     customerId = customers.data?.[0]?.id || '';
   }
@@ -213,6 +217,27 @@ async function getOrCreateStripeCustomerId(user, createIfMissing = false) {
 
   if (customerId) await updateUserFields(user.id, { stripe_customer_id: customerId });
   return customerId;
+}
+
+async function syncUserWithStripe(user) {
+  if (!stripe || !user) return user;
+
+  let customerId = user.stripe_customer_id || '';
+  if (!customerId && user.email && user.plan === 'plus') {
+    customerId = await getOrCreateStripeCustomerId(user, false, { lookupByEmail: true });
+  }
+  if (!customerId) return user;
+
+  const subscriptions = await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 100 });
+  const hasUsableSubscription = subscriptions.data.some((sub) => ['active', 'trialing', 'past_due', 'unpaid'].includes(sub.status));
+  const nextPlan = hasUsableSubscription ? 'plus' : (user.plan === 'plus' ? 'free' : user.plan || 'free');
+
+  const updates = {};
+  if (user.stripe_customer_id !== customerId) updates.stripe_customer_id = customerId;
+  if ((user.plan || 'free') !== nextPlan) updates.plan = nextPlan;
+
+  if (Object.keys(updates).length) return await updateUserFields(user.id, updates) || { ...user, ...updates };
+  return user;
 }
 
 async function getAccountDeletionEligibility(user) {
@@ -256,8 +281,9 @@ async function requireUser(req, res, next) {
     const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
     if (!token) return res.status(401).json({ error: 'Bitte einloggen.' });
     const payload = jwt.verify(token, authSecret);
-    const user = await findUserById(payload.sub);
+    let user = await findUserById(payload.sub);
     if (!user) return res.status(401).json({ error: 'Konto nicht gefunden.' });
+    user = await syncUserWithStripe(user);
     req.user = user; next();
   } catch { res.status(401).json({ error: 'Login abgelaufen. Bitte erneut einloggen.' }); }
 }

@@ -36,6 +36,10 @@ async function refreshAll(){
 }
 async function refreshAuth(){ const r=await send({type:'REMY_GET_AUTH'}); state.loggedIn=Boolean(r?.loggedIn); state.auth=r?.auth||null; if(r?.usage) state.usage=r.usage; return r; }
 async function refreshUsage(){ try{const res=await fetch(`${getBackendUrl()}/api/usage`,{headers:authHeaders()}); if(res.ok){const d=await res.json(); state.usage=d.usage; renderUsage();}}catch{} }
+function schedulePostBillingRefresh(){
+  // Stripe braucht manchmal ein paar Sekunden, bis die Subscription im API-Status sichtbar ist.
+  [2000, 5000, 10000, 20000].forEach(delay=>setTimeout(()=>{ if(state.loggedIn) refreshAll(); }, delay));
+}
 async function checkBackend(){ try{const res=await fetch(`${getBackendUrl()}/health`); const d=await res.json(); setAiStatus(d.ok&&d.hasKey,d.hasKey?'KI bereit':'KI später erneut');}catch{setAiStatus(false,'KI nicht erreichbar');}}
 function setMode(mode){ state.mode=mode==='public'?'public':'local'; send({type:'REMY_SET_MODE',mode:state.mode}); renderMode(); $('question').focus(); }
 async function ask(question){
@@ -67,7 +71,16 @@ async function clearChatMain(){
   if($('question')) $('question').value='';
 }
 
-async function openUpgrade(){ if(!state.loggedIn){send({type:'REMY_START_LOGIN'});return;} const res=await fetch(`${getBackendUrl()}/api/create-checkout-session`,{method:'POST',headers:authHeaders(),body:'{}'}); const d=await res.json().catch(()=>({})); if(d.url) chrome.tabs.create({url:d.url}); else $('answer').textContent=d.error||'Upgrade ist noch nicht eingerichtet.'; }
+async function openUpgrade(){
+  if(!state.loggedIn){send({type:'REMY_START_LOGIN'});return;}
+  const res=await fetch(`${getBackendUrl()}/api/create-checkout-session`,{method:'POST',headers:authHeaders(),body:'{}'});
+  const d=await res.json().catch(()=>({}));
+  if(d.url){
+    $('answer').textContent='Stripe Checkout wird geöffnet… Nach dem Kauf aktualisiert Remy deinen Unlimited-Status automatisch.';
+    chrome.tabs.create({url:d.url});
+    schedulePostBillingRefresh();
+  } else $('answer').textContent=d.error||'Upgrade ist noch nicht eingerichtet.';
+}
 async function manageSubscription(){
   try {
     if(!state.loggedIn){ send({type:'REMY_START_LOGIN'}); return; }
@@ -79,6 +92,7 @@ async function manageSubscription(){
       return;
     }
     chrome.tabs.create({ url:d.url });
+    schedulePostBillingRefresh();
   } catch (error) {
     console.error(error);
     $('answer').textContent='Abo-Verwaltung konnte nicht geöffnet werden.';
