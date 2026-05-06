@@ -10,7 +10,8 @@ const REMY_DEFAULTS = {
   },
   omni_stats: { rememberedTotal: 0, lastNudgeAt: 0 },
   remy_auth: { token: null, user: null },
-  remy_mode: 'local'
+  remy_mode: 'local',
+  remy_chat_state: {}
 };
 const CATEGORY_RULES = {
   banking: ['bank','sparkasse','volksbank','ing.de','dkb.de','comdirect','n26.com','revolut','wise.com','broker','depot','konto','finanzen'],
@@ -30,7 +31,8 @@ chrome.runtime.onInstalled.addListener(async ({ reason }) => {
     omni_settings: mergeSettings(current.omni_settings),
     omni_stats: current.omni_stats || REMY_DEFAULTS.omni_stats,
     remy_auth: current.remy_auth || REMY_DEFAULTS.remy_auth,
-    remy_mode: current.remy_mode || 'local'
+    remy_mode: current.remy_mode || 'local',
+    remy_chat_state: current.remy_chat_state || REMY_DEFAULTS.remy_chat_state
   });
   await setupContextMenus();
   await updateBadge();
@@ -62,6 +64,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === 'REMY_GET_AUTH') return await getAuthState();
     if (message?.type === 'REMY_LOGOUT') { await storageSet({ remy_auth: { token: null, user: null } }); return { ok: true }; }
     if (message?.type === 'REMY_SET_MODE') { await storageSet({ remy_mode: message.mode === 'public' ? 'public' : 'local' }); return { ok: true, mode: message.mode === 'public' ? 'public' : 'local' }; }
+    if (message?.type === 'REMY_CLEAR_CHAT') return await clearChatState(message.mode);
     if (message?.type === 'REMY_SIDEBAR_ASK') return await askFromExtension(message.question, message.mode, sender.tab?.id);
     return { ok: false, error: 'Unbekannte Anfrage.' };
   };
@@ -113,8 +116,27 @@ async function askFromExtension(question, mode = 'local', tabId = null) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) return { ok: false, error: data.error || 'Remy konnte gerade nicht antworten.', usage: data.usage };
   if (data.usage) await storageSet({ remy_usage_cache: data.usage });
-  return { ok: true, answer: data.answer, usage: data.usage, sources: safeMode === 'local' ? memories.slice(0, 5) : [] };
+  const sources = safeMode === 'local' ? memories.slice(0, 5) : [];
+  await saveChatState(safeMode, { question, answer: data.answer || '', sources, updatedAt: new Date().toISOString() });
+  return { ok: true, answer: data.answer, usage: data.usage, sources };
 }
+
+async function saveChatState(mode, chat) {
+  const safeMode = mode === 'public' ? 'public' : 'local';
+  const { remy_chat_state = {} } = await storageGet(['remy_chat_state']);
+  await storageSet({ remy_chat_state: { ...remy_chat_state, [safeMode]: chat } });
+  return { ok: true, chat };
+}
+
+async function clearChatState(mode) {
+  const safeMode = mode === 'public' ? 'public' : 'local';
+  const { remy_chat_state = {} } = await storageGet(['remy_chat_state']);
+  const next = { ...remy_chat_state };
+  delete next[safeMode];
+  await storageSet({ remy_chat_state: next });
+  return { ok: true, chat: null };
+}
+
 
 async function getOpenTabsForContext() {
   const tabs = await chrome.tabs.query({ currentWindow: true });
@@ -183,7 +205,7 @@ async function setCategory(category, value) { const { omni_settings } = await st
 async function setAutoRemember(value) { const { omni_settings } = await storageGet(['omni_settings']); const s = mergeSettings(omni_settings); s.autoRemember = value; await storageSet({ omni_settings: s }); await updateBadge(); return { ok: true, settings: s }; }
 async function setOnboardingSeen(value) { const { omni_settings } = await storageGet(['omni_settings']); const s = mergeSettings(omni_settings); s.hasSeenOnboarding = value; await storageSet({ omni_settings: s }); return { ok: true, settings: s }; }
 async function deletePage(id) { const { omni_pages = [] } = await storageGet(['omni_pages']); const pages = omni_pages.filter(p => p.id !== id); await storageSet({ omni_pages: pages }); await updateBadge(pages.length); return { ok: true, pages }; }
-async function getState() { const data = await storageGet(['omni_pages','omni_settings','omni_stats','remy_mode','remy_usage_cache']); return { ok: true, pages: data.omni_pages || [], settings: mergeSettings(data.omni_settings), stats: data.omni_stats || {}, mode: data.remy_mode || 'local', usage: data.remy_usage_cache || null }; }
+async function getState() { const data = await storageGet(['omni_pages','omni_settings','omni_stats','remy_mode','remy_usage_cache','remy_chat_state']); return { ok: true, pages: data.omni_pages || [], settings: mergeSettings(data.omni_settings), stats: data.omni_stats || {}, mode: data.remy_mode || 'local', usage: data.remy_usage_cache || null, chatState: data.remy_chat_state || {} }; }
 async function rememberPage(rawPage, tab) { const { omni_settings } = await storageGet(['omni_settings']); const s = mergeSettings(omni_settings); if (!s.autoRemember) return { saved: false, reason: 'paused' }; const skip = shouldSkipPage(rawPage, s); if (!rawPage || skip) return { saved: false, reason: skip || 'skipped' }; const page = cleanPage(rawPage, tab); if (!page.text || page.text.length < 120) return { saved: false, reason: 'too_short' }; return saveCleanPage(page, { allowRecentDuplicate: false }); }
 async function saveCleanPage(page, opts = {}) { const { omni_pages = [], omni_stats = {} } = await storageGet(['omni_pages','omni_stats']); const existingIndex = omni_pages.findIndex(p => p.url === page.url); if (existingIndex >= 0) omni_pages.splice(existingIndex, 1); const pages = [page, ...omni_pages].slice(0, 220); await storageSet({ omni_pages: pages, omni_stats: { ...omni_stats, rememberedTotal: Number(omni_stats.rememberedTotal || 0) + 1 } }); await updateBadge(pages.length); return { saved: true, page, count: pages.length }; }
 function cleanPage(raw, tab = {}) { const url = raw.url || tab.url || ''; return { id: simpleHash(`${url}|${Date.now()}`), title: clip(raw.title || tab.title || 'Ohne Titel', 180), url, domain: raw.domain || safeDomain(url), description: clip(raw.description, 500), headings: clip(raw.headings, 800), text: clip(raw.text, 18000), summary: summarize(raw), keywords: keywords(raw), searchQuery: extractSearchQuery(url), platform: raw.platform || 'generic', media: raw.media || {}, language: raw.language || {}, savedAt: new Date().toISOString() }; }

@@ -2,7 +2,7 @@ const $ = id => document.getElementById(id);
 const DEFAULT_BACKEND_URL = 'https://remy-backend-uqrf.onrender.com';
 const PRIVACY_URL = 'https://flawless-larch-8ee.notion.site/Datenschutzerkl-rung-Remy-Tab-AI-358662dac386801f8771cb80d253942a';
 const IMPRINT_URL = 'https://flawless-larch-8ee.notion.site/Impressum-Remy-Tab-AI-358662dac38680aa97b1cf5dadd72375?pvs=73';
-let state = { pages: [], settings: {}, usage: null, mode: 'local', auth: null, loggedIn: false };
+let state = { pages: [], settings: {}, usage: null, mode: 'local', auth: null, loggedIn: false, chatState: {} };
 function send(message){ return new Promise(resolve => chrome.runtime.sendMessage(message, resolve)); }
 function storageGet(keys){ return new Promise(resolve => chrome.storage.local.get(keys, resolve)); }
 function getBackendUrl(){ return DEFAULT_BACKEND_URL; }
@@ -45,7 +45,7 @@ function schedulePostBillingRefresh(){
   [2000, 5000, 10000, 20000].forEach(delay=>setTimeout(()=>{ if(state.loggedIn) refreshAll(); }, delay));
 }
 async function checkBackend(){ try{const res=await fetch(`${getBackendUrl()}/health`); const d=await res.json(); setAiStatus(d.ok&&d.hasKey,d.hasKey?'KI bereit':'KI später erneut');}catch{setAiStatus(false,'KI nicht erreichbar');}}
-function setMode(mode){ state.mode=mode==='public'?'public':'local'; send({type:'REMY_SET_MODE',mode:state.mode}); renderMode(); $('question').focus(); }
+function setMode(mode){ state.mode=mode==='public'?'public':'local'; send({type:'REMY_SET_MODE',mode:state.mode}); renderMode(); renderSavedChat(); $('question').focus(); }
 async function ask(question){
   question=String(question||'').trim();
   if(!question)return;
@@ -59,18 +59,30 @@ async function ask(question){
   }
   if(r.usage){state.usage=r.usage;renderUsage();}
   await refreshUsage();
-  $('answer').innerHTML=`<span class="ai-label">Antwort</span>\n${escapeHtml(r.answer||'Keine Antwort.')}${renderSources(r.sources||[])}`;
+  const chat = { question, answer: r.answer || 'Keine Antwort.', sources: r.sources || [], updatedAt: new Date().toISOString() };
+  state.chatState = { ...(state.chatState || {}), [state.mode]: chat };
+  renderChat(chat);
   bindLinks();
   $('question').value='';
 }
-function render(){ const logged=state.loggedIn; $('loginGate').classList.toggle('hidden',logged); $('mainApp').classList.toggle('hidden',!logged); if(!logged)return; const autoOn=state.settings?.autoRemember!==false; $('toggleAuto').classList.toggle('off',!autoOn); $('autoStatus').textContent=autoOn?'Automatik aktiv':'Automatik pausiert'; $('memoryCount').textContent=`${(state.pages||[]).length} lokale Erinnerungen`; $('accountText').textContent=state.auth?.user?.email?`Angemeldet als ${state.auth.user.email}`:'Angemeldet'; if($('tutorialCard')) $('tutorialCard').classList.toggle('hidden', Boolean(state.settings?.hasSeenOnboarding)); renderMode(); renderUsage(); renderPrivacy(); renderMemories(); }
+function render(){ const logged=state.loggedIn; $('loginGate').classList.toggle('hidden',logged); $('mainApp').classList.toggle('hidden',!logged); if(!logged)return; const autoOn=state.settings?.autoRemember!==false; $('toggleAuto').classList.toggle('off',!autoOn); $('autoStatus').textContent=autoOn?'Automatik aktiv':'Automatik pausiert'; $('memoryCount').textContent=`${(state.pages||[]).length} lokale Erinnerungen`; $('accountText').textContent=state.auth?.user?.email?`Angemeldet als ${state.auth.user.email}`:'Angemeldet'; if($('tutorialCard')) $('tutorialCard').classList.toggle('hidden', Boolean(state.settings?.hasSeenOnboarding)); renderMode(); renderUsage(); renderPrivacy(); renderMemories(); renderSavedChat(); }
 function renderMode(){ const pub=state.mode==='public'; $('modeLocal').classList.toggle('active',!pub); $('modePublic').classList.toggle('active',pub); $('modeHelp').textContent=pub?'Allgemein fragen nutzt KI-Wissen. Keine privaten Daten eingeben.':'Browser suchen nutzt gespeicherte Seiten und aktuell offene Tabs (Titel + URL, ohne Seiteninhalt).'; }
+function renderSavedChat(){ renderChat((state.chatState || {})[state.mode]); }
+function renderChat(chat){
+  if(!$('answer')) return;
+  if(!chat || !chat.answer){ $('answer').innerHTML=''; return; }
+  const questionLine = chat.question ? `<div class="saved-question"><strong>Du:</strong> ${escapeHtml(chat.question)}</div>` : '';
+  $('answer').innerHTML=`${questionLine}<span class="ai-label">Antwort</span>\n${escapeHtml(chat.answer || 'Keine Antwort.')}${renderSources(chat.sources || [])}`;
+  bindLinks();
+}
 function renderUsage(){ const u=state.usage||{plan:'free',planName:'Remy Free',used:0,limit:7,remaining:7,plusPrice:'3,99 € / Monat',resetLabel:'Woche',trialAvailable:true}; const isPaid=u.plan==='plus'||u.plan==='lifetime'; $('planName').textContent=isPaid?(u.planName||(u.plan==='lifetime'?'Remy Lifetime':'Remy Unlimited')):'Remy Free'; const rem=u.remaining ?? Math.max(0,u.limit-u.used); const period=u.resetLabel|| (u.plan==='free'?'Woche':'Monat'); const trial=u.trialAvailable?' · erste Test-Anfrage kostenlos':''; $('usageText').textContent=isPaid?`${rem} von ${u.limit} Anfragen diesen ${period} übrig`:`${rem} von ${u.limit} Free-Anfragen diese ${period} übrig${trial} · Unlimited ${u.plusPrice||'3,99 € / Monat'}`; $('usageBar').style.width=`${Math.min(100,Math.round((u.used/u.limit)*100))}%`; $('upgradeBtn').textContent=isPaid?(u.plan==='lifetime'?'Lifetime aktiv':'Unlimited aktiv'):'Upgrade'; $('upgradeBtn').disabled=isPaid; $('manageSubscription').classList.toggle('hidden',!isPaid); }
 function renderPrivacy(){ const cats=state.settings?.blockedCategories||{}; document.querySelectorAll('[data-category]').forEach(i=>i.checked=cats[i.dataset.category]!==false); const domains=state.settings?.ignoredDomains||[]; $('ignoredDomains').innerHTML=domains.length?domains.map(d=>`<div class="ignored-domain"><span>${escapeHtml(d)}</span><button data-domain="${escapeHtml(d)}">Entfernen</button></div>`).join(''):'<p class="empty">Keine Websites blockiert.</p>'; $('ignoredDomains').querySelectorAll('button').forEach(b=>b.onclick=async()=>{const r=await send({type:'OMNI_REMOVE_IGNORED_DOMAIN',domain:b.dataset.domain}); if(r?.ok){state.settings=r.settings;renderPrivacy();}}); }
 function renderMemories(){ const pages=state.pages||[]; $('memories').innerHTML=pages.length?pages.slice(0,8).map(p=>`<article class="memory"><div class="favicon">${escapeHtml((p.domain||p.title||'?')[0].toUpperCase())}</div><div><div class="memory-title-row"><div class="memory-title">${escapeHtml(p.title||'Ohne Titel')}</div><button class="delete-memory" data-id="${escapeHtml(p.id||'')}">×</button></div><div class="memory-meta">${escapeHtml(p.domain||'')}</div><div class="memory-summary">${escapeHtml(p.summary||'')}</div><button class="open-memory" data-url="${escapeHtml(p.url||'')}">Öffnen</button></div></article>`).join(''):'<p class="empty">Noch leer. Öffne eine normale Webseite und warte kurz.</p>'; $('memories').querySelectorAll('.delete-memory').forEach(b=>b.onclick=async()=>{const r=await send({type:'OMNI_DELETE_PAGE',id:b.dataset.id}); if(r?.ok){state.pages=r.pages;renderMemories();}}); $('memories').querySelectorAll('.open-memory').forEach(b=>b.onclick=()=>chrome.tabs.create({url:b.dataset.url})); }
 
 async function clearChatMain(){
   await send({type:'REMY_CLEAR_CHAT', mode:state.mode});
+  state.chatState = { ...(state.chatState || {}) };
+  delete state.chatState[state.mode];
   if($('answer')) $('answer').innerHTML='<span class="ai-label">Chat gelöscht</span> Der Chatinhalt wurde gelöscht. Du kannst jetzt ein neues Thema starten.';
   if($('question')) $('question').value='';
 }
