@@ -72,7 +72,7 @@ function renderChat(chat){
   if(!$('answer')) return;
   if(!chat || !chat.answer){ $('answer').innerHTML=''; return; }
   const questionLine = chat.question ? `<div class="saved-question"><strong>Du:</strong> ${escapeHtml(chat.question)}</div>` : '';
-  $('answer').innerHTML=`${questionLine}<span class="ai-label">Antwort</span>\n${escapeHtml(chat.answer || 'Keine Antwort.')}${renderSources(chat.sources || [])}`;
+  $('answer').innerHTML=`${questionLine}<span class="ai-label">Antwort</span>\n${linkifyText(chat.answer || 'Keine Antwort.')}${renderSources(chat.sources || [])}`;
   bindLinks();
 }
 function renderUsage(){ const u=state.usage||{plan:'free',planName:'Remy Free',used:0,limit:7,remaining:7,plusPrice:'3,99 € / Monat',resetLabel:'Woche',trialAvailable:true}; const isPaid=u.plan==='plus'||u.plan==='lifetime'; $('planName').textContent=isPaid?(u.planName||(u.plan==='lifetime'?'Remy Lifetime':'Remy Unlimited')):'Remy Free'; const rem=u.remaining ?? Math.max(0,u.limit-u.used); const period=u.resetLabel|| (u.plan==='free'?'Woche':'Monat'); const trial=u.trialAvailable?' · erste Test-Anfrage kostenlos':''; $('usageText').textContent=isPaid?`${rem} von ${u.limit} Anfragen diesen ${period} übrig`:`${rem} von ${u.limit} Free-Anfragen diese ${period} übrig${trial} · Unlimited ${u.plusPrice||'3,99 € / Monat'}`; $('usageBar').style.width=`${Math.min(100,Math.round((u.used/u.limit)*100))}%`; $('upgradeBtn').textContent=isPaid?(u.plan==='lifetime'?'Lifetime aktiv':'Unlimited aktiv'):'Upgrade'; $('upgradeBtn').disabled=isPaid; $('manageSubscription').classList.toggle('hidden',!isPaid); }
@@ -135,7 +135,27 @@ function showDeleteModal(){
   });
 }
 function setAiStatus(ok,text){const el=$('aiStatus');el.classList.toggle('ok',ok);el.classList.toggle('off',!ok);el.textContent=text;}
-function renderSources(sources){ if(!sources.length)return''; return '<div class="sources-title">Passende Links</div>'+sources.map(s=>`<div class="source"><strong>${escapeHtml(s.title||s.domain||'Quelle')}</strong><br><span>${escapeHtml(s.domain||'')}</span><button class="open-source" data-url="${escapeHtml(s.url||'')}">Öffnen</button></div>`).join(''); }
-function bindLinks(){ document.querySelectorAll('.open-source').forEach(b=>b.onclick=()=>chrome.tabs.create({url:b.dataset.url})); }
+function renderSources(sources){
+  const clean = (sources || []).filter(s => /^https?:\/\//.test(s.url || '')).slice(0,3);
+  if(!clean.length)return'';
+  return '<div class="sources-title">Passende Links</div>'+clean.map(s=>`<div class="source"><strong>${escapeHtml(s.title||s.domain||'Quelle')}</strong><br><span>${escapeHtml(s.domain||'')}</span><button class="open-source" data-url="${escapeHtml(s.url||'')}">Öffnen</button></div>`).join('');
+}
+function bindLinks(){
+  document.querySelectorAll('.open-source,.answer-link').forEach(el=>{
+    el.onclick=(e)=>{
+      e.preventDefault();
+      const url = el.dataset.url || el.href;
+      if(url) send({ type:'REMY_FOCUS_OR_OPEN_URL', url });
+    };
+  });
+}
+function linkifyText(text){
+  const escaped = escapeHtml(text || '');
+  return escaped.replace(/(https?:\/\/[^\s<]+)/g, raw => {
+    const url = raw.replace(/[),.;!?]+$/, '');
+    const tail = raw.slice(url.length);
+    return `<a class="answer-link" href="${url}" data-url="${url}">${url}</a>${tail}`;
+  });
+}
 function escapeHtml(str){return String(str||'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;');}
 init().catch(e=>{$('loginGate').classList.remove('hidden');$('loginGate').querySelector('p').textContent=e.message||'Remy konnte nicht starten.'});

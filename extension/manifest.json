@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Remy Tab AI",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Remy Tab AI merkt sich hilfreiche Browserseiten, schützt sensible Bereiche und hilft dir, gespeicherte oder aktuell offene Tabs mit KI und Links wiederzufinden.",
   "permissions": [
     "storage",

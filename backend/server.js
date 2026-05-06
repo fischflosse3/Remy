@@ -38,6 +38,11 @@ const pendingDevices = new Map();
 const rateBuckets = new Map();
 
 app.use(cors({ origin: true }));
+
+// Stripe braucht den unveränderten Raw-Body, damit die Webhook-Signatur geprüft werden kann.
+// Diese Route muss deshalb VOR express.json() registriert werden.
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), handleStripeWebhook);
+
 app.use(express.json({ limit: '1mb' }));
 app.use(rateLimitMiddleware);
 
@@ -133,7 +138,7 @@ app.post('/api/ask', requireUser, async (req, res) => {
 
     const systemText = mode === 'public'
       ? 'Du bist Remy Tab AI im Modus Allgemein fragen. Antworte hilfreich, klar und kurz auf Deutsch. Nutze allgemeines Wissen. Nutze keine Browser-Erinnerungen und frage nicht nach privaten Browserdaten.'
-      : 'Du bist Remy Tab AI im Modus Browser-Suche. Antworte auf Deutsch, klar und knapp. Nutze ausschließlich die übergebenen Quellen: gespeicherte Browser-Erinnerungen und aktuell offene Tabs. Offene Tabs enthalten nur Titel und URL, keinen Seiteninhalt. Wenn eine Quelle als aktueller offener Tab markiert ist, darfst du daraus nur Titel, Domain und URL ableiten. Wenn der Nutzer nach einem Link fragt, nenne den passenden Link direkt. Wenn der Nutzer nach Seiteninhalt eines offenen Tabs fragt, sage ehrlich, dass der Inhalt nicht gelesen wurde. Verwende kein allgemeines Wissen, wenn es nicht aus den Quellen hervorgeht. Erfinde keine Quellen. Nenne passende Quellen mit Titel, Domain und URL.';
+      : 'Du bist Remy Tab AI im Modus Browser-Suche. Antworte auf Deutsch, klar und knapp. Nutze ausschließlich die übergebenen Quellen: gespeicherte Browser-Erinnerungen und aktuell offene Tabs. Offene Tabs enthalten nur Titel und URL, keinen Seiteninhalt. Wenn eine Quelle als aktueller offener Tab markiert ist, darfst du daraus nur Titel, Domain und URL ableiten. Wenn der Nutzer nach einem Link fragt, nenne maximal 1 bis 3 wirklich passende Links direkt. Wenn der Nutzer nach Seiteninhalt eines offenen Tabs fragt, sage ehrlich, dass der Inhalt nicht gelesen wurde. Verwende kein allgemeines Wissen, wenn es nicht aus den Quellen hervorgeht. Erfinde keine Quellen. Nenne passende Quellen mit Titel, Domain und URL.';
     const context = mode === 'local' ? memories.map((m, i) => {
       const isOpenTab = m.sourceType === 'open_tab';
       return [
@@ -200,6 +205,93 @@ app.post('/api/create-customer-portal-session', requireUser, async (req, res) =>
     res.status(500).json({ error: 'Abo-Verwaltung konnte nicht geöffnet werden.' });
   }
 });
+
+async function handleStripeWebhook(req, res) {
+  if (!stripe) return res.status(400).send('Stripe ist nicht konfiguriert.');
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
+  if (!webhookSecret) return res.status(400).send('STRIPE_WEBHOOK_SECRET fehlt.');
+
+  let event;
+  try {
+    const signature = req.headers['stripe-signature'];
+    event = stripe.webhooks.constructEvent(req.body, signature, webhookSecret);
+  } catch (error) {
+    console.error('Stripe webhook signature error:', error.message);
+    return res.status(400).send(`Webhook signature failed: ${error.message}`);
+  }
+
+  try {
+    switch (event.type) {
+      case 'checkout.session.completed':
+        await handleCheckoutCompleted(event.data.object);
+        break;
+      case 'customer.subscription.created':
+      case 'customer.subscription.updated':
+      case 'customer.subscription.deleted':
+        await applySubscriptionToUser(event.data.object);
+        break;
+      case 'invoice.paid':
+      case 'invoice.payment_failed':
+        await handleInvoiceSubscriptionEvent(event.data.object);
+        break;
+      default:
+        break;
+    }
+    res.json({ received: true });
+  } catch (error) {
+    console.error('Stripe webhook handling error:', event?.type, error);
+    res.status(500).send('Webhook konnte nicht verarbeitet werden.');
+  }
+}
+
+async function handleCheckoutCompleted(session) {
+  const userId = session?.metadata?.remy_user_id || '';
+  const customerId = typeof session?.customer === 'string' ? session.customer : session?.customer?.id || '';
+  const subscriptionId = typeof session?.subscription === 'string' ? session.subscription : session?.subscription?.id || '';
+
+  let user = userId ? await findUserById(userId) : null;
+  if (!user && customerId) user = await findUserByStripeCustomerId(customerId);
+  if (!user) return;
+
+  const updates = {};
+  if (customerId && user.stripe_customer_id !== customerId) updates.stripe_customer_id = customerId;
+
+  if (subscriptionId) {
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+    await applySubscriptionToUser(subscription, user, updates);
+    return;
+  }
+
+  updates.plan = 'plus';
+  if (Object.keys(updates).length) await updateUserFields(user.id, updates);
+}
+
+async function handleInvoiceSubscriptionEvent(invoice) {
+  const subscriptionId = typeof invoice?.subscription === 'string' ? invoice.subscription : invoice?.subscription?.id || '';
+  if (!subscriptionId) return;
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+  await applySubscriptionToUser(subscription);
+}
+
+async function applySubscriptionToUser(subscription, knownUser = null, extraUpdates = {}) {
+  if (!subscription) return;
+  const customerId = typeof subscription.customer === 'string' ? subscription.customer : subscription.customer?.id || '';
+  const userId = subscription.metadata?.remy_user_id || '';
+  let user = knownUser || (userId ? await findUserById(userId) : null);
+  if (!user && customerId) user = await findUserByStripeCustomerId(customerId);
+  if (!user) return;
+
+  const nextPlan = stripeSubscriptionGivesAccess(subscription) ? 'plus' : 'free';
+  const updates = { ...extraUpdates };
+  if (customerId && user.stripe_customer_id !== customerId) updates.stripe_customer_id = customerId;
+  if ((user.plan || 'free') !== nextPlan) updates.plan = nextPlan;
+
+  if (Object.keys(updates).length) await updateUserFields(user.id, updates);
+}
+
+function stripeSubscriptionGivesAccess(subscription) {
+  return ['active', 'trialing', 'past_due', 'unpaid'].includes(subscription?.status);
+}
 
 app.listen(port, () => console.log(`Remy backend läuft auf Port ${port}`));
 
@@ -337,6 +429,15 @@ async function findUserById(id) {
     return data || null;
   }
   const s = await readStore(); return s.users[id] || null;
+}
+async function findUserByStripeCustomerId(customerId) {
+  if (!customerId) return null;
+  if (supabase) {
+    const { data, error } = await supabase.from('remy_users').select('*').eq('stripe_customer_id', customerId).maybeSingle();
+    if (error) throw new Error(`Supabase Stripe-Kundenabfrage fehlgeschlagen: ${error.message}`);
+    return data || null;
+  }
+  const s = await readStore(); return Object.values(s.users).find(u => u.stripe_customer_id === customerId) || null;
 }
 async function createUser(email, password_hash) {
   const user = { id: crypto.randomUUID(), email, password_hash, plan: 'free', created_at: new Date().toISOString() };

@@ -66,6 +66,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === 'REMY_SET_MODE') { await storageSet({ remy_mode: message.mode === 'public' ? 'public' : 'local' }); return { ok: true, mode: message.mode === 'public' ? 'public' : 'local' }; }
     if (message?.type === 'REMY_CLEAR_CHAT') return await clearChatState(message.mode);
     if (message?.type === 'REMY_SIDEBAR_ASK') return await askFromExtension(message.question, message.mode, sender.tab?.id);
+    if (message?.type === 'REMY_FOCUS_OR_OPEN_URL') return await focusOrOpenUrl(message.url);
     return { ok: false, error: 'Unbekannte Anfrage.' };
   };
   run().then(r => sendResponse({ ok: true, ...r })).catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
@@ -119,6 +120,31 @@ async function askFromExtension(question, mode = 'local', tabId = null) {
   const sources = safeMode === 'local' ? memories.slice(0, 5) : [];
   await saveChatState(safeMode, { question, answer: data.answer || '', sources, updatedAt: new Date().toISOString() });
   return { ok: true, answer: data.answer, usage: data.usage, sources };
+}
+
+async function focusOrOpenUrl(url) {
+  if (!/^https?:\/\//.test(String(url || ''))) return { ok: false, error: 'Ungültiger Link.' };
+  const target = normalizeUrlForCompare(url);
+  const tabs = await chrome.tabs.query({});
+  const existing = tabs.find(tab => normalizeUrlForCompare(tab.url || '') === target)
+    || tabs.find(tab => normalizeUrlForCompare(tab.url || '').replace(/\/$/, '') === target.replace(/\/$/, ''));
+  if (existing?.id) {
+    await chrome.tabs.update(existing.id, { active: true });
+    if (existing.windowId) await chrome.windows.update(existing.windowId, { focused: true });
+    return { ok: true, focused: true };
+  }
+  await chrome.tabs.create({ url });
+  return { ok: true, created: true };
+}
+
+function normalizeUrlForCompare(url) {
+  try {
+    const u = new URL(url);
+    u.hash = '';
+    return u.toString();
+  } catch {
+    return String(url || '');
+  }
 }
 
 async function saveChatState(mode, chat) {
